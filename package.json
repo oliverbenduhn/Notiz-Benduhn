@@ -1,5 +1,5 @@
 {
-  "name": "webnote-minimal",
+  "name": "notiz-benduhn",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,8 @@
     "body-parser": "^1.20.2",
     "express": "^4.19.2",
     "morgan": "^1.10.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "socket.io": "^4.7.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

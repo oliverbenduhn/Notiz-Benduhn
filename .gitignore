@@ -1,0 +1,33 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Projektspezifische Dateien
+database.db
+*.db
+*.db-journal
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+
+# IDE und Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Umgebungsvariablen
+.env
+.env.local
+.env.*.local
+
+# Build-Verzeichnisse
+dist/
+build/
