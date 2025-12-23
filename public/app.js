@@ -2,6 +2,7 @@ const noteField = document.querySelector("#note");
 const statusEl = document.querySelector("#status");
 const fontDecreaseButton = document.querySelector("#font-decrease");
 const fontIncreaseButton = document.querySelector("#font-increase");
+const clearButton = document.querySelector("#note-clear");
 
 const AUTO_SEND_DELAY = 250;
 const FONT_STORAGE_KEY = "notiz-benduhn:fontSize";
@@ -404,6 +405,25 @@ if (fontDecreaseButton && fontIncreaseButton) {
     applyFontSize(currentFontSizePx + FONT_STEP_PX);
   });
   initialiseFontSize();
+}
+
+if (clearButton) {
+  clearButton.addEventListener("click", () => {
+    if (isLockedForCurrentUser()) {
+      setStatus("Änderungen gesperrt – bitte kurz warten.", "info");
+      return;
+    }
+    if (noteField.value.trim().length === 0) {
+      setStatus("Arbeitsblatt ist bereits leer.", "info");
+      return;
+    }
+    const confirmed = window.confirm("Arbeitsblatt wirklich leeren?");
+    if (!confirmed) return;
+    noteField.value = "";
+    noteField.focus();
+    setStatus("Arbeitsblatt geleert – synchronisiere ...", "info");
+    scheduleSend(true);
+  });
 }
 
 window.addEventListener("beforeunload", () => {

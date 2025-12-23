@@ -127,6 +127,24 @@ body {
   box-shadow: none;
 }
 
+.font-controls .clear-button {
+  width: auto;
+  padding: 0 0.9rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: rgba(217, 48, 37, 0.92);
+}
+
+.font-controls .clear-button:hover {
+  background: rgba(200, 40, 31, 0.96);
+}
+
+.font-controls .clear-button:active {
+  background: rgba(180, 32, 26, 0.98);
+}
+
 @media (max-width: 768px) {
   .font-controls {
     flex-direction: column;
