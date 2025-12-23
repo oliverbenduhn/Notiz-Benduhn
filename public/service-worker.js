@@ -1,11 +1,13 @@
-const CACHE_NAME = "notiz-benduhn-static-v1";
+const CACHE_NAME = "notiz-benduhn-static-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/style.css?v=3",
-  "/app.js",
+  "/app.js?v=2",
   "/manifest.json",
-  "/icons/icon.svg"
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon.png"
 ];
 
 self.addEventListener("install", (event) => {
