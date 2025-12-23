@@ -1,6 +1,7 @@
 services:
   notiz-benduhn:
     build: .
+    init: true
     ports:
       - "8085:8085"
     environment:
@@ -8,7 +9,20 @@ services:
       DB_PATH: "/data/database.db"
     volumes:
       - notiz_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:8085/api/note').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    stop_grace_period: 20s
 
 volumes:
   notiz_data:
