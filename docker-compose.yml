@@ -1,0 +1,14 @@
+services:
+  notiz-benduhn:
+    build: .
+    ports:
+      - "8085:8085"
+    environment:
+      PORT: "8085"
+      DB_PATH: "/data/database.db"
+    volumes:
+      - notiz_data:/data
+    restart: unless-stopped
+
+volumes:
+  notiz_data:

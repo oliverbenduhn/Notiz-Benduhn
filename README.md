@@ -32,6 +32,16 @@ npm start         # startet den Server ohne nodemon
 
 Hinweis: Führe `npm run migrate` vor dem ersten Start aus oder nach Schemaänderungen.
 
+## Docker
+
+Build und Start mit Docker Compose:
+
+```bash
+docker compose up -d --build
+```
+
+Die SQLite-Datenbank wird als Volume unter `/data/database.db` gespeichert. Der Pfad kann bei Bedarf per `DB_PATH`-Umgebungsvariable angepasst werden.
+
 ## Socket.io-Ereignisse (kurz)
 
 - `note:state` (Server → Client): { content, updatedAt } – wird bei Verbindung und nach Änderungen gesendet
