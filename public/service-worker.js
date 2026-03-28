@@ -1,9 +1,9 @@
-const CACHE_NAME = "notiz-benduhn-static-v2";
+const CACHE_NAME = "notiz-benduhn-static-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/style.css?v=3",
-  "/app.js?v=2",
+  "/style.css?v=4",
+  "/app.js?v=3",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",
@@ -30,9 +30,11 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
+
+  // Share-Target: Bilder + Text von Android
   if (request.method === "POST") {
     const url = new URL(request.url);
-    if (url.pathname === "/share") {
+    if (url.pathname === "/share-target") {
       event.respondWith(
         (async () => {
           let client = null;
@@ -42,10 +44,25 @@ self.addEventListener("fetch", (event) => {
               const value = formData.get(key);
               return typeof value === "string" ? value : "";
             };
+
+            // Bilddateien hochladen
+            const imageFiles = formData.getAll("image").filter(
+              (v) => v instanceof File && v.size > 0
+            );
+            if (imageFiles.length > 0) {
+              const uploadForm = new FormData();
+              for (const file of imageFiles) {
+                uploadForm.append("image", file, file.name);
+              }
+              await fetch("/api/images", { method: "POST", body: uploadForm });
+            }
+
+            // Text-Payload an App-Window senden
             const sharePayload = {
               title: extractText("title"),
               text: extractText("text"),
-              url: extractText("url")
+              url: extractText("url"),
+              hasImages: imageFiles.length > 0
             };
             const windowClients = await self.clients.matchAll({
               type: "window",
@@ -55,10 +72,7 @@ self.addEventListener("fetch", (event) => {
               windowClients.find((c) => new URL(c.url).pathname === "/") ||
               (await self.clients.openWindow("/"));
             if (client) {
-              client.postMessage({
-                type: "share-target",
-                payload: sharePayload
-              });
+              client.postMessage({ type: "share-target", payload: sharePayload });
             }
           } catch (error) {
             console.error("Share target handling failed:", error);
@@ -73,7 +87,10 @@ self.addEventListener("fetch", (event) => {
     }
   }
 
-  if (request.method !== "GET" || request.headers.get("accept")?.includes("text/event-stream")) {
+  if (
+    request.method !== "GET" ||
+    request.headers.get("accept")?.includes("text/event-stream")
+  ) {
     return;
   }
 
