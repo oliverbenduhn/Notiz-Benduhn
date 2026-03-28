@@ -6,6 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
+import multer from "multer";
+import { mkdirSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +17,29 @@ const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
   : path.join(__dirname, "database.db");
 sqlite3.verbose();
+
+const UPLOADS_DIR = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(path.dirname(DB_PATH), "uploads");
+
+mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}-${safeName}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Nur Bilddateien erlaubt."));
+  }
+});
 
 const db = new sqlite3.Database(DB_PATH);
 const NOTE_ID = 1;
@@ -57,31 +83,39 @@ const runMigrations = () =>
     db.serialize(() => {
       db.run("DROP TABLE IF EXISTS workspaces", (dropErr) => {
         if (dropErr) return reject(dropErr);
-        db.all("PRAGMA table_info(notes)", (pragmaErr, columns) => {
-          if (pragmaErr) return reject(pragmaErr);
-          const columnNames = columns.map((col) => col.name);
-          const expectedColumns = ["id", "content", "updated_at"];
-          const isExpectedSchema =
-            columnNames.length === expectedColumns.length &&
-            expectedColumns.every((name) => columnNames.includes(name));
+        db.run(
+          `CREATE TABLE IF NOT EXISTS note_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL UNIQUE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          )`,
+          (imgErr) => {
+            if (imgErr) return reject(imgErr);
+            db.all("PRAGMA table_info(notes)", (pragmaErr, columns) => {
+              if (pragmaErr) return reject(pragmaErr);
+              const columnNames = columns.map((col) => col.name);
+              const expectedColumns = ["id", "content", "updated_at"];
+              const isExpectedSchema =
+                columnNames.length === expectedColumns.length &&
+                expectedColumns.every((name) => columnNames.includes(name));
 
-          const proceed = () => {
-            ensureDefaultNote()
-              .then(resolve)
-              .catch(reject);
-          };
+              const proceed = () => {
+                ensureDefaultNote().then(resolve).catch(reject);
+              };
 
-          if (columnNames.length === 0) {
-            createNotesTable().then(resolve).catch(reject);
-          } else if (!isExpectedSchema) {
-            db.run("DROP TABLE IF EXISTS notes", (dropNotesErr) => {
-              if (dropNotesErr) return reject(dropNotesErr);
-              createNotesTable().then(resolve).catch(reject);
+              if (columnNames.length === 0) {
+                createNotesTable().then(resolve).catch(reject);
+              } else if (!isExpectedSchema) {
+                db.run("DROP TABLE IF EXISTS notes", (dropNotesErr) => {
+                  if (dropNotesErr) return reject(dropNotesErr);
+                  createNotesTable().then(resolve).catch(reject);
+                });
+              } else {
+                proceed();
+              }
             });
-          } else {
-            proceed();
           }
-        });
+        );
       });
     });
   });
@@ -128,6 +162,23 @@ const updateNote = async (content) => {
   );
   return getNoteState();
 };
+
+const dbAll = (sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+
+const insertImage = (filename) =>
+  dbRun("INSERT INTO note_images (filename) VALUES (?)", [filename]);
+
+const deleteImageRecord = (filename) =>
+  dbRun("DELETE FROM note_images WHERE filename = ?", [filename]);
+
+const getAllImages = () =>
+  dbAll("SELECT id, filename, created_at FROM note_images ORDER BY created_at ASC");
 
 const app = express();
 const httpServer = createServer(app);
@@ -193,6 +244,75 @@ app.put("/api/note", async (req, res) => {
     console.error("Failed to save note:", err);
     res.status(500).json({ error: "Notiz konnte nicht gespeichert werden." });
   }
+});
+
+// Bilder statisch ausliefern
+app.use("/uploads", express.static(UPLOADS_DIR));
+
+// GET /api/images - alle Bilder auflisten
+app.get("/api/images", async (_req, res) => {
+  try {
+    const rows = await getAllImages();
+    const images = rows.map((r) => ({
+      id: r.id,
+      filename: r.filename,
+      url: `/uploads/${r.filename}`,
+      createdAt: r.created_at
+    }));
+    res.json(images);
+  } catch (err) {
+    console.error("Failed to list images:", err);
+    res.status(500).json({ error: "Bilder konnten nicht geladen werden." });
+  }
+});
+
+// POST /api/images - Upload (ein oder mehrere Bilder)
+app.post("/api/images", upload.array("image", 10), async (req, res) => {
+  try {
+    const files = req.files ?? [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: "Keine Dateien hochgeladen." });
+    }
+    const results = [];
+    for (const file of files) {
+      await insertImage(file.filename);
+      results.push({ filename: file.filename, url: `/uploads/${file.filename}` });
+    }
+    res.json(results);
+  } catch (err) {
+    console.error("Upload failed:", err);
+    res.status(500).json({ error: "Upload fehlgeschlagen." });
+  }
+});
+
+// DELETE /api/images/:filename - Bild loeschen
+app.delete("/api/images/:filename", async (req, res) => {
+  const { filename } = req.params;
+  if (!filename || filename.includes("/") || filename.includes("..")) {
+    return res.status(400).json({ error: "Ungültiger Dateiname." });
+  }
+  try {
+    await deleteImageRecord(filename);
+    const filePath = path.join(UPLOADS_DIR, filename);
+    await unlink(filePath).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Delete failed:", err);
+    res.status(500).json({ error: "Löschen fehlgeschlagen." });
+  }
+});
+
+// POST /share-target - Android-Share (Bilder + Text)
+app.post("/share-target", upload.array("image", 10), async (req, res) => {
+  try {
+    const files = req.files ?? [];
+    for (const file of files) {
+      await insertImage(file.filename);
+    }
+  } catch (err) {
+    console.error("Share-target upload failed:", err);
+  }
+  res.redirect(303, "/");
 });
 
 app.use((_req, res) => {
