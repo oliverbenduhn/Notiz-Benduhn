@@ -267,7 +267,12 @@ app.get("/api/images", async (_req, res) => {
 });
 
 // POST /api/images - Upload (ein oder mehrere Bilder)
-app.post("/api/images", upload.array("image", 10), async (req, res) => {
+app.post("/api/images", (req, res, next) => {
+  upload.array("image", 10)(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}, async (req, res) => {
   try {
     const files = req.files ?? [];
     if (files.length === 0) {
@@ -294,7 +299,9 @@ app.delete("/api/images/:filename", async (req, res) => {
   try {
     await deleteImageRecord(filename);
     const filePath = path.join(UPLOADS_DIR, filename);
-    await unlink(filePath).catch(() => {});
+    await unlink(filePath).catch((err) => {
+  if (err.code !== "ENOENT") console.warn("Could not delete file:", filePath, err.code);
+});
     res.json({ ok: true });
   } catch (err) {
     console.error("Delete failed:", err);
