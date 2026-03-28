@@ -54,7 +54,10 @@ self.addEventListener("fetch", (event) => {
               for (const file of imageFiles) {
                 uploadForm.append("image", file, file.name);
               }
-              await fetch("/api/images", { method: "POST", body: uploadForm });
+              const uploadRes = await fetch("/api/images", { method: "POST", body: uploadForm });
+              if (!uploadRes.ok) {
+                throw new Error(`Image upload failed: ${uploadRes.status}`);
+              }
             }
 
             // Text-Payload an App-Window senden
@@ -71,8 +74,12 @@ self.addEventListener("fetch", (event) => {
             client =
               windowClients.find((c) => new URL(c.url).pathname === "/") ||
               (await self.clients.openWindow("/"));
-            if (client) {
-              client.postMessage({ type: "share-target", payload: sharePayload });
+            try {
+              if (client) {
+                client.postMessage({ type: "share-target", payload: sharePayload });
+              }
+            } catch (msgErr) {
+              console.error("Failed to send message to client:", msgErr);
             }
           } catch (error) {
             console.error("Share target handling failed:", error);
