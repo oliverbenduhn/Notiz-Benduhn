@@ -3,6 +3,9 @@ const statusEl = document.querySelector("#status");
 const fontDecreaseButton = document.querySelector("#font-decrease");
 const fontIncreaseButton = document.querySelector("#font-increase");
 const clearButton = document.querySelector("#note-clear");
+const imageGallery = document.querySelector("#image-gallery");
+const imageUploadBtn = document.querySelector("#image-upload-btn");
+const imageUploadInput = document.querySelector("#image-upload-input");
 
 const AUTO_SEND_DELAY = 250;
 const FONT_STORAGE_KEY = "notiz-benduhn:fontSize";
@@ -28,6 +31,83 @@ const socket = io();
 const setStatus = (message, variant = "idle") => {
   statusEl.textContent = message;
   statusEl.dataset.variant = variant;
+};
+
+const uploadImages = async (files) => {
+  if (!files || files.length === 0) return;
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("image", file, file.name);
+  }
+  setStatus("Lade Bild hoch ...", "info");
+  try {
+    const res = await fetch("/api/images", { method: "POST", body: formData });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadGallery();
+    setStatus("Bild gespeichert.", "success");
+  } catch (err) {
+    console.error("Upload error:", err);
+    setStatus("Bild-Upload fehlgeschlagen.", "error");
+  }
+};
+
+const showImageOverlay = (url) => {
+  const overlay = document.createElement("div");
+  overlay.className = "image-overlay";
+  const img = document.createElement("img");
+  img.src = url;
+  img.alt = "";
+  overlay.appendChild(img);
+  overlay.addEventListener("click", () => overlay.remove());
+  document.body.appendChild(overlay);
+};
+
+const loadGallery = async () => {
+  if (!imageGallery) return;
+  try {
+    const res = await fetch("/api/images");
+    if (!res.ok) return;
+    const images = await res.json();
+
+    // Galerie leeren (sicher, ohne innerHTML)
+    while (imageGallery.firstChild) {
+      imageGallery.removeChild(imageGallery.firstChild);
+    }
+
+    for (const imgData of images) {
+      const item = document.createElement("div");
+      item.className = "gallery-item";
+
+      const imgEl = document.createElement("img");
+      imgEl.src = imgData.url;
+      imgEl.alt = "";
+      imgEl.loading = "lazy";
+      imgEl.addEventListener("click", () => showImageOverlay(imgData.url));
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "gallery-item__delete";
+      delBtn.textContent = "\u00d7"; // ×
+      delBtn.setAttribute("aria-label", "Bild l\u00f6schen");
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!window.confirm("Bild wirklich l\u00f6schen?")) return;
+        try {
+          await fetch(`/api/images/${encodeURIComponent(imgData.filename)}`, {
+            method: "DELETE"
+          });
+          await loadGallery();
+        } catch {
+          setStatus("Bild konnte nicht gel\u00f6scht werden.", "error");
+        }
+      });
+
+      item.appendChild(imgEl);
+      item.appendChild(delBtn);
+      imageGallery.appendChild(item);
+    }
+  } catch (err) {
+    console.error("Gallery load error:", err);
+  }
 };
 
 const normaliseErrorDetail = (error) => {
@@ -56,11 +136,11 @@ const interpretSocketError = (context, error) => {
     normalised.includes("transport error")
   ) {
     advice =
-      "Server nicht erreichbar – bitte prüfen, ob der Dienst läuft und die Seite ggf. neu laden.";
+      "Server nicht erreichbar \u2013 bitte pr\u00fcfen, ob der Dienst l\u00e4uft und die Seite ggf. neu laden.";
   } else if (normalised.includes("timeout")) {
-    advice = "Zeitüberschreitung bei der Socket-Verbindung – Netzwerk oder Server prüfen.";
+    advice = "Zeit\u00fcberschreitung bei der Socket-Verbindung \u2013 Netzwerk oder Server pr\u00fcfen.";
   } else if (normalised.includes("websocket")) {
-    advice = "WebSocket-Verbindung fehlgeschlagen – eventuell blockiert ein Proxy oder eine Firewall.";
+    advice = "WebSocket-Verbindung fehlgeschlagen \u2013 eventuell blockiert ein Proxy oder eine Firewall.";
   } else {
     advice = "Netzwerkfehler bei der Socket-Verbindung.";
   }
@@ -79,7 +159,7 @@ const describeDisconnectReason = (reason) => {
     case "io client disconnect":
       return "durch Benutzeraktion getrennt";
     case "ping timeout":
-      return "Zeitüberschreitung bei der Verbindung";
+      return "Zeit\u00fcberschreitung bei der Verbindung";
     case "transport close":
     case "transport error":
       return "Transportschicht wurde geschlossen";
@@ -164,7 +244,7 @@ const flushQueuedContent = () => {
   lastSentContent = queuedContent;
   hasPendingAck = true;
   queuedContent = null;
-  setStatus("Übertrage Änderungen ...", "info");
+  setStatus("\u00dcbertrage \u00c4nderungen ...", "info");
 };
 
 const applyRemoteState = ({ content = "", updatedAt = null } = {}) => {
@@ -184,7 +264,7 @@ const applyRemoteState = ({ content = "", updatedAt = null } = {}) => {
 
   if (localAheadOfRemote) {
     setStatus(
-      `Server bestätigt frühere Änderungen: ${formatTimestamp(updatedAt)}`,
+      `Server best\u00e4tigt fr\u00fchere \u00c4nderungen: ${formatTimestamp(updatedAt)}`,
       "info"
     );
     flushQueuedContent();
@@ -225,19 +305,19 @@ const applyRemoteState = ({ content = "", updatedAt = null } = {}) => {
 const sendUpdate = () => {
   clearTimeout(sendTimer);
   if (!isConnected) {
-    setStatus("Keine Verbindung – Änderungen lokal", "error");
+    setStatus("Keine Verbindung \u2013 \u00c4nderungen lokal", "error");
     return;
   }
 
   if (hasPendingAck) {
     queuedContent = noteField.value;
-    setStatus("Warte auf Serverbestätigung ...", "info");
+    setStatus("Warte auf Serverbest\u00e4tigung ...", "info");
     return;
   }
 
   if (isLockedForCurrentUser()) {
     queuedContent = noteField.value;
-    setStatus("Änderungen gesperrt – bitte kurz warten.", "info");
+    setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
     return;
   }
 
@@ -253,7 +333,7 @@ const sendUpdate = () => {
   socket.emit("note:edit", { content });
   lastSentContent = content;
   hasPendingAck = true;
-  setStatus("Übertrage Änderungen ...", "info");
+  setStatus("\u00dcbertrage \u00c4nderungen ...", "info");
 };
 
 const scheduleSend = (immediate = false) => {
@@ -276,7 +356,7 @@ const integrateSharedContent = (payload) => {
   const existing = noteField.value;
   const separator = existing.trim().length > 0 ? "\n\n" : "";
   noteField.value = `${existing}${separator}${snippet}`;
-  setStatus("Geteilter Inhalt übernommen.", "success");
+  setStatus("Geteilter Inhalt \u00fcbernommen.", "success");
   noteField.focus();
   scheduleSend(true);
 };
@@ -285,12 +365,15 @@ const handleServiceWorkerMessage = (event) => {
   if (!event || typeof event.data !== "object" || event.data === null) return;
   const { type, payload } = event.data;
   if (type !== "share-target") return;
+  if (payload?.hasImages) {
+    loadGallery();
+  }
   integrateSharedContent(payload);
 };
 
 socket.on("connect", () => {
   isConnected = true;
-  setStatus("Verbunden – synchronisiere ...", "info");
+  setStatus("Verbunden \u2013 synchronisiere ...", "info");
   if (noteField.value !== lastServerContent) {
     scheduleSend(true);
   } else {
@@ -301,7 +384,7 @@ socket.on("connect", () => {
 
 socket.io.on("reconnect", () => {
   isConnected = true;
-  setStatus("Verbindung wiederhergestellt – synchronisiere ...", "info");
+  setStatus("Verbindung wiederhergestellt \u2013 synchronisiere ...", "info");
   socket.emit("note:fetch");
   flushQueuedContent();
 });
@@ -310,7 +393,7 @@ socket.on("disconnect", (reason) => {
   isConnected = false;
   const readableReason = describeDisconnectReason(reason);
   setStatus(
-    `Verbindung getrennt (${readableReason}). Änderungen werden lokal gehalten.`,
+    `Verbindung getrennt (${readableReason}). \u00c4nderungen werden lokal gehalten.`,
     "error"
   );
 });
@@ -346,14 +429,14 @@ socket.io.on("reconnect_error", (err) => {
 
 socket.io.on("reconnect_failed", (err) => {
   setStatus(
-    interpretSocketError("Wiederverbindung endgültig fehlgeschlagen", err),
+    interpretSocketError("Wiederverbindung endg\u00fcltig fehlgeschlagen", err),
     "error"
   );
 });
 
 socket.io.on("connect_timeout", () => {
   setStatus(
-    "Zeitüberschreitung beim Verbindungsaufbau – bitte Netzwerk oder Server prüfen.",
+    "Zeit\u00fcberschreitung beim Verbindungsaufbau \u2013 bitte Netzwerk oder Server pr\u00fcfen.",
     "error"
   );
 });
@@ -390,10 +473,21 @@ noteField.addEventListener("input", () => {
   scheduleSend(false);
 });
 
+noteField.addEventListener("paste", (event) => {
+  const items = event.clipboardData?.items ?? [];
+  const imageItems = Array.from(items).filter(
+    (item) => item.kind === "file" && item.type.startsWith("image/")
+  );
+  if (imageItems.length === 0) return;
+  event.preventDefault();
+  const files = imageItems.map((item) => item.getAsFile()).filter(Boolean);
+  uploadImages(files);
+});
+
 noteField.addEventListener("beforeinput", (event) => {
   if (isLockedForCurrentUser()) {
     event.preventDefault();
-    setStatus("Änderungen gesperrt – bitte kurz warten.", "info");
+    setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
   }
 });
 
@@ -410,7 +504,7 @@ if (fontDecreaseButton && fontIncreaseButton) {
 if (clearButton) {
   clearButton.addEventListener("click", () => {
     if (isLockedForCurrentUser()) {
-      setStatus("Änderungen gesperrt – bitte kurz warten.", "info");
+      setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
       return;
     }
     if (noteField.value.trim().length === 0) {
@@ -421,8 +515,17 @@ if (clearButton) {
     if (!confirmed) return;
     noteField.value = "";
     noteField.focus();
-    setStatus("Arbeitsblatt geleert – synchronisiere ...", "info");
+    setStatus("Arbeitsblatt geleert \u2013 synchronisiere ...", "info");
     scheduleSend(true);
+  });
+}
+
+if (imageUploadBtn && imageUploadInput) {
+  imageUploadBtn.addEventListener("click", () => imageUploadInput.click());
+  imageUploadInput.addEventListener("change", () => {
+    const files = Array.from(imageUploadInput.files ?? []);
+    imageUploadInput.value = "";
+    uploadImages(files);
   });
 }
 
@@ -440,6 +543,9 @@ if ("serviceWorker" in navigator) {
       .catch((err) => console.error("Service Worker registration failed:", err));
   });
 }
+
+// Galerie beim Start laden
+loadGallery();
 
 const isLockedForCurrentUser = () => {
   if (!currentLock || !currentLock.holderId) return false;
@@ -485,7 +591,7 @@ const applyLock = (lock) => {
     wasLockedForUs = false;
     setEditingEnabled(true);
     if (shouldNotify) {
-      setStatus("Bearbeitung wieder möglich.", "success");
+      setStatus("Bearbeitung wieder m\u00f6glich.", "success");
     }
     flushQueuedContent();
     return;
@@ -523,7 +629,7 @@ const applyLock = (lock) => {
     if (!currentLock) return;
     setEditingEnabled(true);
     currentLock = null;
-    setStatus("Bearbeitung wieder möglich.", "success");
+    setStatus("Bearbeitung wieder m\u00f6glich.", "success");
     wasLockedForUs = false;
     flushQueuedContent();
   }, remainingMs);
