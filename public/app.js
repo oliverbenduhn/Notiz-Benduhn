@@ -92,9 +92,10 @@ const loadGallery = async () => {
         e.stopPropagation();
         if (!window.confirm("Bild wirklich l\u00f6schen?")) return;
         try {
-          await fetch(`/api/images/${encodeURIComponent(imgData.filename)}`, {
+          const delRes = await fetch(`/api/images/${encodeURIComponent(imgData.filename)}`, {
             method: "DELETE"
           });
+          if (!delRes.ok) throw new Error(`HTTP ${delRes.status}`);
           await loadGallery();
         } catch {
           setStatus("Bild konnte nicht gel\u00f6scht werden.", "error");
