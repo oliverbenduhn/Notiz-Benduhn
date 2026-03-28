@@ -65,10 +65,7 @@
         {
           "name": "image",
           "accept": [
-            "image/png",
-            "image/jpeg",
-            "image/gif",
-            "image/webp"
+            "image/*"
           ]
         }
       ]
