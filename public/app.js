@@ -66,7 +66,10 @@ const loadGallery = async () => {
   if (!imageGallery) return;
   try {
     const res = await fetch("/api/images");
-    if (!res.ok) return;
+    if (!res.ok) {
+      setStatus("Bilder konnten nicht geladen werden.", "error");
+      return;
+    }
     const images = await res.json();
 
     // Galerie leeren (sicher, ohne innerHTML)
@@ -97,6 +100,7 @@ const loadGallery = async () => {
           });
           if (!delRes.ok) throw new Error(`HTTP ${delRes.status}`);
           await loadGallery();
+          setStatus("Bild gelöscht.", "success");
         } catch {
           setStatus("Bild konnte nicht gel\u00f6scht werden.", "error");
         }
@@ -225,6 +229,13 @@ const initialiseFontSize = () => {
     // ignore storage access issues
   }
   applyFontSize(currentFontSizePx, { persist: false });
+};
+
+const isLockedForCurrentUser = () => {
+  if (!currentLock || !currentLock.holderId) return false;
+  if (currentLock.expiresAt && currentLock.expiresAt < Date.now()) return false;
+  if (currentLock.isSelf) return false;
+  return currentLock.holderId !== socket.id;
 };
 
 const flushQueuedContent = () => {
@@ -548,12 +559,6 @@ if ("serviceWorker" in navigator) {
 // Galerie beim Start laden
 loadGallery();
 
-const isLockedForCurrentUser = () => {
-  if (!currentLock || !currentLock.holderId) return false;
-  if (currentLock.expiresAt && currentLock.expiresAt < Date.now()) return false;
-  if (currentLock.isSelf) return false;
-  return currentLock.holderId !== socket.id;
-};
 
 const setEditingEnabled = (enabled) => {
   noteField.readOnly = !enabled;

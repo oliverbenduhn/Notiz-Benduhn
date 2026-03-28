@@ -293,12 +293,15 @@ app.post("/api/images", (req, res, next) => {
 // DELETE /api/images/:filename - Bild loeschen
 app.delete("/api/images/:filename", async (req, res) => {
   const { filename } = req.params;
-  if (!filename || filename.includes("/") || filename.includes("..")) {
+  if (!filename) {
+    return res.status(400).json({ error: "Ungültiger Dateiname." });
+  }
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (!filePath.startsWith(UPLOADS_DIR + path.sep)) {
     return res.status(400).json({ error: "Ungültiger Dateiname." });
   }
   try {
     await deleteImageRecord(filename);
-    const filePath = path.join(UPLOADS_DIR, filename);
     await unlink(filePath).catch((err) => {
   if (err.code !== "ENOENT") console.warn("Could not delete file:", filePath, err.code);
 });
@@ -310,7 +313,15 @@ app.delete("/api/images/:filename", async (req, res) => {
 });
 
 // POST /share-target - Android-Share (Bilder + Text)
-app.post("/share-target", upload.array("image", 10), async (req, res) => {
+app.post("/share-target", (req, res, next) => {
+  upload.array("image", 10)(req, res, (err) => {
+    if (err) {
+      // Bei multer-Fehler (z.B. falscher MIME-Typ): trotzdem zu / weiterleiten
+      return res.redirect(303, "/");
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const files = req.files ?? [];
     for (const file of files) {
