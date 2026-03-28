@@ -10,7 +10,7 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icon.png" type="image/png" />
     <link rel="apple-touch-icon" href="./icon-192.png" />
-    <link rel="stylesheet" href="./style.css?v=3" />
+    <link rel="stylesheet" href="./style.css?v=4" />
   </head>
   <body>
     <main class="viewport">
@@ -20,10 +20,12 @@
         aria-label="Notizfeld"
         autofocus
       ></textarea>
+      <div id="image-gallery" aria-label="Bilder"></div>
     </main>
     <div class="font-controls" role="group" aria-label="Schriftgröße anpassen">
       <button id="font-decrease" type="button" aria-label="Schrift verkleinern">−</button>
       <button id="font-increase" type="button" aria-label="Schrift vergrößern">+</button>
+      <button id="image-upload-btn" type="button" aria-label="Bild hochladen">📎</button>
       <button
         id="note-clear"
         class="clear-button"
@@ -33,8 +35,16 @@
         CLR
       </button>
     </div>
+    <input
+      type="file"
+      id="image-upload-input"
+      accept="image/*"
+      multiple
+      style="display:none"
+      aria-hidden="true"
+    />
     <div id="status" data-variant="idle">Bereit.</div>
     <script src="/socket.io/socket.io.js"></script>
-    <script src="./app.js?v=2"></script>
+    <script src="./app.js?v=3"></script>
   </body>
 </html>
