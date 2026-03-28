@@ -219,7 +219,11 @@ const isLockedFor = (socketId) =>
 
 app.use(morgan("dev"));
 app.use(bodyParser.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.get('/manifest.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json; charset=UTF-8');
+  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+});
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get("/api/note", async (_req, res) => {
   try {
