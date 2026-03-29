@@ -1,4 +1,4 @@
-name: Node.js CI
+name: CI + Deploy
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -16,7 +16,7 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
@@ -30,3 +30,22 @@ jobs:
 
       - name: Run tests (if present)
         run: npm run test --if-present
+
+  deploy:
+    needs: build-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Deploy via Komodo API (SSH Proxy über VPS)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_VPS_HOST }}
+          username: ansible
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            curl -s -X POST http://192.168.50.40:9120/execute \
+              -H "Content-Type: application/json" \
+              -H "X-Api-Key: ${{ secrets.KOMODO_API_KEY }}" \
+              -H "X-Api-Secret: ${{ secrets.KOMODO_API_SECRET }}" \
+              -d '{"type": "DeployStack", "params": {"stack": "694a8c02556feafdaa7d5707"}}' \
+              | grep -q '"success":true' && echo "Deploy erfolgreich" || (echo "Deploy fehlgeschlagen" && exit 1)
