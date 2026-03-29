@@ -36,16 +36,18 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: Deploy via Komodo API (SSH Proxy über VPS)
+      - name: Deploy auf docker-03 (via VPS Jump-Host)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.DEPLOY_VPS_HOST }}
+          host: 192.168.50.43
           username: ansible
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          proxy_host: ${{ secrets.DEPLOY_VPS_HOST }}
+          proxy_username: ansible
+          proxy_key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            curl -s -X POST http://192.168.50.40:9120/execute \
-              -H "Content-Type: application/json" \
-              -H "X-Api-Key: ${{ secrets.KOMODO_API_KEY }}" \
-              -H "X-Api-Secret: ${{ secrets.KOMODO_API_SECRET }}" \
-              -d '{"type": "DeployStack", "params": {"stack": "694a8c02556feafdaa7d5707"}}' \
-              | grep -q '"success":true' && echo "Deploy erfolgreich" || (echo "Deploy fehlgeschlagen" && exit 1)
+            cd /etc/komodo/stacks/notiz-benduhn
+            git pull origin main
+            docker compose build --no-cache
+            docker compose up -d
+            echo "Deploy abgeschlossen: $(docker ps --filter name=notiz-benduhn --format '{{.Status}}')"
