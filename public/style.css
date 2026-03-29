@@ -153,6 +153,25 @@ body {
   background: rgba(180, 32, 26, 0.98);
 }
 
+.app-version {
+  position: fixed;
+  top: calc(0.65rem + env(safe-area-inset-top));
+  right: clamp(0.65rem, 2.8vw, 1rem);
+  z-index: 45;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(32, 33, 36, 0.14);
+  color: color-mix(in srgb, var(--text) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-size: 0.72rem;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
 /* ── Bild-Galerie ─────────────────────────────────────────── */
 
 #image-gallery {
@@ -238,6 +257,12 @@ body {
 }
 
 @media (min-width: 769px) {
+  .app-version {
+    top: 0.9rem;
+    right: 1rem;
+    font-size: 0.75rem;
+  }
+
   .viewport {
     flex-direction: row;
   }
@@ -314,6 +339,12 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
+  .app-version {
+    background: rgba(232, 234, 237, 0.12);
+    border-color: rgba(232, 234, 237, 0.22);
+    color: rgba(232, 234, 237, 0.9);
+  }
+
   :root {
     --bg: #121212;
     --text: #e8eaed;
