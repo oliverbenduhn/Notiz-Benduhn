@@ -73,11 +73,16 @@ app.post('/api/images', upload.single('image'), (req, res) => {
 
 app.delete('/api/images/:filename', (req, res) => {
   const { filename } = req.params
-  if (!filename || filename.includes('/') || filename.includes('..')) {
+  const target = path.resolve(UPLOADS_DIR, filename)
+  // Path-Traversal-Schutz: aufgelöster Pfad muss innerhalb UPLOADS_DIR liegen
+  if (!target.startsWith(UPLOADS_DIR + path.sep)) {
     return res.status(400).json({ error: 'Ungültiger Dateiname.' })
   }
+  // Erst prüfen ob Datei in DB existiert
+  const row = db.prepare('SELECT id FROM note_images WHERE filename = ?').get(filename)
+  if (!row) return res.status(404).json({ error: 'Nicht gefunden.' })
   db.prepare('DELETE FROM note_images WHERE filename = ?').run(filename)
-  try { unlinkSync(path.join(UPLOADS_DIR, filename)) } catch { /* ignoriere */ }
+  try { unlinkSync(target) } catch { /* ignoriere wenn Datei fehlt */ }
   res.json({ ok: true })
 })
 
