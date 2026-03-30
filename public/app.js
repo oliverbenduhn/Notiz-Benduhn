@@ -1,642 +1,350 @@
-const noteField = document.querySelector("#note");
-const statusEl = document.querySelector("#status");
-const fontDecreaseButton = document.querySelector("#font-decrease");
-const fontIncreaseButton = document.querySelector("#font-increase");
-const clearButton = document.querySelector("#note-clear");
-const imageGallery = document.querySelector("#image-gallery");
-const imageUploadBtn = document.querySelector("#image-upload-btn");
-const imageUploadInput = document.querySelector("#image-upload-input");
+import { Editor, Extension } from 'https://esm.sh/@tiptap/core@2'
+import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2'
+import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2'
+import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2'
+import Suggestion from 'https://esm.sh/@tiptap/suggestion@2'
 
-const AUTO_SEND_DELAY = 250;
-const FONT_STORAGE_KEY = "notiz-benduhn:fontSize";
-const FONT_MIN_PX = 14;
-const FONT_MAX_PX = 28;
-const FONT_STEP_PX = 2;
+// DOM-Refs
+const editorEl   = document.querySelector('#editor')
+const saveStatus = document.querySelector('#save-status')
+const lastSaved  = document.querySelector('#last-saved')
+const btnClear   = document.querySelector('#btn-clear')
+const imageInput = document.querySelector('#image-input')
+const toolbar    = document.querySelector('#toolbar')
 
-let sendTimer = null;
-let lastServerContent = "";
-let lastUpdatedAt = null;
-let isConnected = false;
-let hasPendingAck = false;
-let lastSentContent = "";
-let queuedContent = null;
-let currentLock = null;
-let lockTimer = null;
-let lockCountdownInterval = null;
-let wasLockedForUs = false;
-let currentFontSizePx = null;
-
-const socket = io();
-
-const setStatus = (message, variant = "idle") => {
-  statusEl.textContent = message;
-  statusEl.dataset.variant = variant;
-};
-
-const uploadImages = async (files) => {
-  if (!files || files.length === 0) return;
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append("image", file, file.name);
+// Status-Anzeige
+let saveTimer = null
+function showStatus(text, variant) {
+  saveStatus.textContent = text
+  saveStatus.className = 'save-status ' + (variant ?? '')
+  clearTimeout(saveTimer)
+  if (variant === 'saved') {
+    saveTimer = setTimeout(() => {
+      saveStatus.textContent = ''
+      saveStatus.className = 'save-status'
+    }, 3000)
   }
-  setStatus("Lade Bild hoch ...", "info");
+}
+
+function updateLastSaved() {
+  lastSaved.textContent = 'gespeichert: gerade eben'
+  setTimeout(() => { lastSaved.textContent = '' }, 5000)
+}
+
+// API
+async function loadNote() {
+  const res = await fetch('/api/note')
+  if (!res.ok) throw new Error('Laden fehlgeschlagen')
+  const { content } = await res.json()
+  return content
+}
+
+async function saveNote(content) {
+  const res = await fetch('/api/note', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  })
+  if (!res.ok) throw new Error('Speichern fehlgeschlagen')
+}
+
+// Bild-Upload
+async function uploadImage(file) {
+  showStatus('Laedt hoch...', 'saving')
+  const form = new FormData()
+  form.append('image', file, file.name)
+  const res = await fetch('/api/images', { method: 'POST', body: form })
+  if (!res.ok) throw new Error('Upload fehlgeschlagen')
+  const { url } = await res.json()
+  return url
+}
+
+async function deleteImageFile(src) {
+  const parts = src.split('/uploads/')
+  if (parts.length < 2) return
+  const filename = parts[1]
+  await fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
+}
+
+async function insertImageFromFile(file) {
   try {
-    const res = await fetch("/api/images", { method: "POST", body: formData });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await loadGallery();
-    setStatus("Bild gespeichert.", "success");
+    const url = await uploadImage(file)
+    editor.chain().focus().setImage({ src: url }).run()
+    showStatus('Gespeichert.', 'saved')
   } catch (err) {
-    console.error("Upload error:", err);
-    setStatus("Bild-Upload fehlgeschlagen.", "error");
+    console.error(err)
+    showStatus('Upload fehlgeschlagen.', 'error')
   }
-};
+}
 
-const showImageOverlay = (url) => {
-  const overlay = document.createElement("div");
-  overlay.className = "image-overlay";
-  const img = document.createElement("img");
-  img.src = url;
-  img.alt = "";
-  overlay.appendChild(img);
-  overlay.addEventListener("click", () => overlay.remove());
-  document.body.appendChild(overlay);
-};
+// DOM-Kinder entfernen
+function clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild)
+}
 
-const loadGallery = async () => {
-  if (!imageGallery) return;
-  try {
-    const res = await fetch("/api/images");
-    if (!res.ok) {
-      setStatus("Bilder konnten nicht geladen werden.", "error");
-      return;
+// Bild-Wrapper (Hover-Delete + Vollbild)
+function wrapImages() {
+  editorEl.querySelectorAll('img:not([data-wrapped])').forEach(img => {
+    img.setAttribute('data-wrapped', '1')
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-wrapper'
+    img.parentNode.insertBefore(wrapper, img)
+    wrapper.appendChild(img)
+
+    img.addEventListener('click', () => {
+      const overlay = document.createElement('div')
+      overlay.className = 'image-overlay'
+      const big = document.createElement('img')
+      big.src = img.src
+      big.alt = ''
+      overlay.appendChild(big)
+      overlay.addEventListener('click', () => overlay.remove())
+      document.body.appendChild(overlay)
+    })
+
+    const del = document.createElement('button')
+    del.className = 'image-delete-btn'
+    del.textContent = '\u00d7'
+    del.title = 'Bild loeschen'
+    del.addEventListener('click', async e => {
+      e.stopPropagation()
+      if (!window.confirm('Bild loeschen?')) return
+      await deleteImageFile(img.src).catch(() => {})
+      const pos = editor.view.posAtDOM(img, 0)
+      const node = editor.state.doc.nodeAt(pos)
+      if (node) {
+        editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
+      }
+    })
+    wrapper.appendChild(del)
+  })
+}
+
+// Auto-Save
+let autoSaveTimer = null
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer)
+  showStatus('Speichern...', 'saving')
+  autoSaveTimer = setTimeout(async () => {
+    try {
+      await saveNote(editor.getJSON())
+      showStatus('Gespeichert.', 'saved')
+      updateLastSaved()
+    } catch {
+      showStatus('Speichern fehlgeschlagen.', 'error')
     }
-    const images = await res.json();
+  }, 800)
+}
 
-    // Galerie leeren (sicher, ohne innerHTML)
-    while (imageGallery.firstChild) {
-      imageGallery.removeChild(imageGallery.firstChild);
-    }
+// Slash-Menue
+const SLASH_COMMANDS = [
+  { title: 'Ueberschrift 1', icon: 'H1',
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run() },
+  { title: 'Ueberschrift 2', icon: 'H2',
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run() },
+  { title: 'Aufzaehlung',    icon: '=',
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleBulletList().run() },
+  { title: 'Nummerierte Liste', icon: '1.',
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleOrderedList().run() },
+  { title: 'Code-Block',    icon: '<>',
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleCodeBlock().run() },
+  { title: 'Bild hochladen', icon: '[+]',
+    cmd: (ed, range) => { ed.chain().focus().deleteRange(range).run(); imageInput.click() } },
+]
 
-    for (const imgData of images) {
-      const item = document.createElement("div");
-      item.className = "gallery-item";
+function buildSlashItem(item, isFocused, props) {
+  const el = document.createElement('div')
+  el.className = 'slash-item' + (isFocused ? ' focused' : '')
+  const iconEl = document.createElement('span')
+  iconEl.className = 'slash-icon'
+  iconEl.textContent = item.icon
+  const labelEl = document.createElement('span')
+  labelEl.textContent = item.title
+  el.appendChild(iconEl)
+  el.appendChild(labelEl)
+  el.addEventListener('mousedown', e => {
+    e.preventDefault()
+    item.cmd(props.editor, props.range)
+  })
+  return el
+}
 
-      const imgEl = document.createElement("img");
-      imgEl.src = imgData.url;
-      imgEl.alt = "";
-      imgEl.loading = "lazy";
-      imgEl.addEventListener("click", () => showImageOverlay(imgData.url));
+function renderSlashMenu(popup, items, selectedIndex, props) {
+  clearChildren(popup)
+  if (items.length === 0) { popup.style.display = 'none'; return }
+  popup.style.display = ''
+  items.forEach((item, i) => popup.appendChild(buildSlashItem(item, i === selectedIndex, props)))
+}
 
-      const delBtn = document.createElement("button");
-      delBtn.className = "gallery-item__delete";
-      delBtn.textContent = "\u00d7"; // ×
-      delBtn.setAttribute("aria-label", "Bild l\u00f6schen");
-      delBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (!window.confirm("Bild wirklich l\u00f6schen?")) return;
-        try {
-          const delRes = await fetch(`/api/images/${encodeURIComponent(imgData.filename)}`, {
-            method: "DELETE"
-          });
-          if (!delRes.ok) throw new Error(`HTTP ${delRes.status}`);
-          await loadGallery();
-          setStatus("Bild gelöscht.", "success");
-        } catch {
-          setStatus("Bild konnte nicht gel\u00f6scht werden.", "error");
+function positionSlashMenu(popup, rect) {
+  if (!rect) return
+  popup.style.top  = (rect.bottom + 6) + 'px'
+  popup.style.left = Math.min(rect.left, window.innerWidth - 220) + 'px'
+}
+
+const SlashMenu = Extension.create({
+  name: 'slashMenu',
+  addProseMirrorPlugins() {
+    return [Suggestion({
+      editor: this.editor,
+      char: '/',
+      startOfLine: false,
+      items: ({ query }) =>
+        SLASH_COMMANDS.filter(c => c.title.toLowerCase().includes(query.toLowerCase())),
+      render: () => {
+        let popup = null
+        let selected = 0
+        return {
+          onStart(props) {
+            selected = 0
+            popup = document.createElement('div')
+            popup.className = 'slash-menu'
+            document.body.appendChild(popup)
+            renderSlashMenu(popup, props.items, selected, props)
+            positionSlashMenu(popup, props.clientRect?.())
+          },
+          onUpdate(props) {
+            selected = 0
+            renderSlashMenu(popup, props.items, selected, props)
+            positionSlashMenu(popup, props.clientRect?.())
+          },
+          onKeyDown(props) {
+            const len = props.items.length
+            if (!len) return false
+            if (props.event.key === 'ArrowDown') {
+              selected = (selected + 1) % len
+              renderSlashMenu(popup, props.items, selected, props)
+              return true
+            }
+            if (props.event.key === 'ArrowUp') {
+              selected = (selected - 1 + len) % len
+              renderSlashMenu(popup, props.items, selected, props)
+              return true
+            }
+            if (props.event.key === 'Enter') {
+              props.items[selected]?.cmd(props.editor, props.range)
+              return true
+            }
+            if (props.event.key === 'Escape') {
+              props.editor.chain().focus().run()
+              return true
+            }
+            return false
+          },
+          onExit() { popup?.remove(); popup = null }
         }
-      });
+      },
+      command: ({ editor: ed, range, props }) => props.cmd(ed, range)
+    })]
+  }
+})
 
-      item.appendChild(imgEl);
-      item.appendChild(delBtn);
-      imageGallery.appendChild(item);
+// Editor
+const editor = new Editor({
+  element: editorEl,
+  extensions: [
+    StarterKit,
+    ImageExtension.configure({ inline: false, allowBase64: false }),
+    Placeholder.configure({ placeholder: 'Text eingeben oder / fuer Befehle ...' }),
+    SlashMenu,
+  ],
+  editorProps: {
+    handleDrop(_view, event, _slice, moved) {
+      if (moved) return false
+      const files = Array.from(event.dataTransfer?.files ?? [])
+        .filter(f => f.type.startsWith('image/'))
+      if (files.length === 0) return false
+      event.preventDefault()
+      files.forEach(f => insertImageFromFile(f))
+      document.body.classList.remove('drag-over')
+      return true
+    },
+    handlePaste(_view, event) {
+      const files = Array.from(event.clipboardData?.files ?? [])
+        .filter(f => f.type.startsWith('image/'))
+      if (files.length === 0) return false
+      event.preventDefault()
+      files.forEach(f => insertImageFromFile(f))
+      return true
     }
+  },
+  onUpdate() { scheduleAutoSave(); wrapImages() },
+  onCreate() { wrapImages() }
+})
+
+// Toolbar
+toolbar.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]')
+  if (!btn) return
+  const chain = editor.chain().focus()
+  switch (btn.dataset.action) {
+    case 'h1':      chain.toggleHeading({ level: 1 }).run(); break
+    case 'h2':      chain.toggleHeading({ level: 2 }).run(); break
+    case 'bold':    chain.toggleBold().run(); break
+    case 'italic':  chain.toggleItalic().run(); break
+    case 'bullet':  chain.toggleBulletList().run(); break
+    case 'ordered': chain.toggleOrderedList().run(); break
+    case 'code':    chain.toggleCodeBlock().run(); break
+    case 'image':   imageInput.click(); break
+  }
+})
+
+function updateToolbarState() {
+  toolbar.querySelectorAll('[data-action]').forEach(btn => {
+    let active = false
+    switch (btn.dataset.action) {
+      case 'h1':      active = editor.isActive('heading', { level: 1 }); break
+      case 'h2':      active = editor.isActive('heading', { level: 2 }); break
+      case 'bold':    active = editor.isActive('bold'); break
+      case 'italic':  active = editor.isActive('italic'); break
+      case 'bullet':  active = editor.isActive('bulletList'); break
+      case 'ordered': active = editor.isActive('orderedList'); break
+      case 'code':    active = editor.isActive('codeBlock'); break
+    }
+    btn.classList.toggle('active', active)
+  })
+}
+editor.on('selectionUpdate', updateToolbarState)
+editor.on('transaction',     updateToolbarState)
+
+// Bild via Datei-Input
+imageInput.addEventListener('change', () => {
+  Array.from(imageInput.files ?? []).forEach(f => insertImageFromFile(f))
+  imageInput.value = ''
+})
+
+// Drag-Over-Indikator
+document.addEventListener('dragover', e => {
+  const hasImage = Array.from(e.dataTransfer?.items ?? [])
+    .some(i => i.kind === 'file' && i.type.startsWith('image/'))
+  if (hasImage) { e.preventDefault(); document.body.classList.add('drag-over') }
+})
+document.addEventListener('dragleave', e => {
+  if (!e.relatedTarget || e.relatedTarget === document.documentElement) {
+    document.body.classList.remove('drag-over')
+  }
+})
+document.addEventListener('drop', () => document.body.classList.remove('drag-over'))
+
+// Leeren
+btnClear.addEventListener('click', () => {
+  if (!window.confirm('Notiz leeren?')) return
+  editor.commands.clearContent(true)
+  scheduleAutoSave()
+})
+
+// Initialer Load
+;(async () => {
+  try {
+    const content = await loadNote()
+    if (content && Object.keys(content).length > 0) {
+      editor.commands.setContent(content, false)
+      wrapImages()
+    }
+    editor.commands.focus('end')
   } catch (err) {
-    console.error("Gallery load error:", err);
+    console.error('Laden fehlgeschlagen:', err)
+    showStatus('Laden fehlgeschlagen.', 'error')
   }
-};
-
-const normaliseErrorDetail = (error) => {
-  if (!error) return "";
-  if (typeof error === "string") return error;
-  if (typeof error.message === "string" && error.message.trim() !== "") {
-    return error.message;
-  }
-  if (typeof error.description === "string" && error.description.trim() !== "") {
-    return error.description;
-  }
-  if (typeof error.type === "string" && error.type.trim() !== "") {
-    return error.type;
-  }
-  return "";
-};
-
-const interpretSocketError = (context, error) => {
-  const detail = normaliseErrorDetail(error);
-  const normalised = detail.toLowerCase();
-  let advice;
-
-  if (
-    normalised.includes("xhr poll error") ||
-    normalised.includes("transport close") ||
-    normalised.includes("transport error")
-  ) {
-    advice =
-      "Server nicht erreichbar \u2013 bitte pr\u00fcfen, ob der Dienst l\u00e4uft und die Seite ggf. neu laden.";
-  } else if (normalised.includes("timeout")) {
-    advice = "Zeit\u00fcberschreitung bei der Socket-Verbindung \u2013 Netzwerk oder Server pr\u00fcfen.";
-  } else if (normalised.includes("websocket")) {
-    advice = "WebSocket-Verbindung fehlgeschlagen \u2013 eventuell blockiert ein Proxy oder eine Firewall.";
-  } else {
-    advice = "Netzwerkfehler bei der Socket-Verbindung.";
-  }
-
-  const detailSuffix = detail
-    ? ` (Technisches Detail: ${detail})`
-    : "";
-  return `${context}: ${advice}${detailSuffix}`;
-};
-
-const describeDisconnectReason = (reason) => {
-  if (!reason) return "unbekannter Grund";
-  switch (reason) {
-    case "io server disconnect":
-      return "Server hat die Verbindung beendet";
-    case "io client disconnect":
-      return "durch Benutzeraktion getrennt";
-    case "ping timeout":
-      return "Zeit\u00fcberschreitung bei der Verbindung";
-    case "transport close":
-    case "transport error":
-      return "Transportschicht wurde geschlossen";
-    default:
-      return reason;
-  }
-};
-
-const formatTimestamp = (timestamp) => {
-  if (!timestamp) return "eben synchronisiert";
-  let date;
-  if (typeof timestamp === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(timestamp)) {
-    date = new Date(timestamp);
-  } else if (typeof timestamp === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(timestamp)) {
-    date = new Date(`${timestamp.replace(" ", "T")}Z`);
-  } else {
-    date = new Date(timestamp);
-  }
-  if (Number.isNaN(date.getTime())) return "unbekannt";
-  return date.toLocaleString("de-DE");
-};
-
-const clampFontSize = (px) =>
-  Math.max(FONT_MIN_PX, Math.min(FONT_MAX_PX, px));
-
-const persistFontSize = (px) => {
-  try {
-    localStorage.setItem(FONT_STORAGE_KEY, String(px));
-  } catch {
-    // ignore storage failures
-  }
-};
-
-const applyFontSize = (px, { persist = true } = {}) => {
-  const clamped = clampFontSize(px);
-  currentFontSizePx = clamped;
-  noteField.style.fontSize = `${clamped}px`;
-  if (persist) {
-    persistFontSize(clamped);
-  }
-  updateFontButtons();
-};
-
-const updateFontButtons = () => {
-  if (!fontDecreaseButton || !fontIncreaseButton) return;
-  fontDecreaseButton.disabled = currentFontSizePx <= FONT_MIN_PX;
-  fontIncreaseButton.disabled = currentFontSizePx >= FONT_MAX_PX;
-};
-
-const initialiseFontSize = () => {
-  const computed = Number.parseFloat(
-    window.getComputedStyle(noteField).fontSize
-  );
-  currentFontSizePx = Number.isFinite(computed) ? computed : 17;
-  try {
-    const stored = Number.parseFloat(localStorage.getItem(FONT_STORAGE_KEY));
-    if (Number.isFinite(stored)) {
-      applyFontSize(stored, { persist: false });
-      return;
-    }
-  } catch {
-    // ignore storage access issues
-  }
-  applyFontSize(currentFontSizePx, { persist: false });
-};
-
-const isLockedForCurrentUser = () => {
-  if (!currentLock || !currentLock.holderId) return false;
-  if (currentLock.expiresAt && currentLock.expiresAt < Date.now()) return false;
-  if (currentLock.isSelf) return false;
-  return currentLock.holderId !== socket.id;
-};
-
-const flushQueuedContent = () => {
-  if (
-    queuedContent === null ||
-    !isConnected ||
-    hasPendingAck ||
-    isLockedForCurrentUser()
-  ) {
-    return;
-  }
-  if (queuedContent === lastServerContent) {
-    queuedContent = null;
-    return;
-  }
-
-  socket.emit("note:edit", { content: queuedContent });
-  lastSentContent = queuedContent;
-  hasPendingAck = true;
-  queuedContent = null;
-  setStatus("\u00dcbertrage \u00c4nderungen ...", "info");
-};
-
-const applyRemoteState = ({ content = "", updatedAt = null } = {}) => {
-  const text = typeof content === "string" ? content : "";
-  const localContent = noteField.value;
-  const remoteMatchesLocal = localContent === text;
-  const isAckOfPending = hasPendingAck && text === lastSentContent;
-  const localAheadOfRemote =
-    isAckOfPending && !remoteMatchesLocal && localContent !== lastSentContent;
-
-  if (isAckOfPending) {
-    hasPendingAck = false;
-  }
-
-  lastServerContent = text;
-  lastUpdatedAt = updatedAt ?? null;
-
-  if (localAheadOfRemote) {
-    setStatus(
-      `Server best\u00e4tigt fr\u00fchere \u00c4nderungen: ${formatTimestamp(updatedAt)}`,
-      "info"
-    );
-    flushQueuedContent();
-    return;
-  }
-
-  if (!remoteMatchesLocal) {
-    const prevLength = localContent.length;
-    const selStart = noteField.selectionStart;
-    const selEnd = noteField.selectionEnd;
-    const cursorAtEnd = selStart === prevLength && selEnd === prevLength;
-
-    noteField.value = text;
-    if (cursorAtEnd) {
-      const nextPos = noteField.value.length;
-      noteField.selectionStart = nextPos;
-      noteField.selectionEnd = nextPos;
-    } else {
-      noteField.selectionStart = selStart;
-      noteField.selectionEnd = selEnd;
-    }
-
-    setStatus(
-      `Live-Update empfangen: ${formatTimestamp(updatedAt)}`,
-      "success"
-    );
-    flushQueuedContent();
-    return;
-  }
-
-  setStatus(
-    `Synchronisiert: ${formatTimestamp(updatedAt)}`,
-    isConnected ? "success" : "info"
-  );
-  flushQueuedContent();
-};
-
-const sendUpdate = () => {
-  clearTimeout(sendTimer);
-  if (!isConnected) {
-    setStatus("Keine Verbindung \u2013 \u00c4nderungen lokal", "error");
-    return;
-  }
-
-  if (hasPendingAck) {
-    queuedContent = noteField.value;
-    setStatus("Warte auf Serverbest\u00e4tigung ...", "info");
-    return;
-  }
-
-  if (isLockedForCurrentUser()) {
-    queuedContent = noteField.value;
-    setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
-    return;
-  }
-
-  const content = noteField.value;
-  if (content === lastServerContent) {
-    setStatus(
-      `Bereits synchron: ${formatTimestamp(lastUpdatedAt)}`,
-      "info"
-    );
-    return;
-  }
-
-  socket.emit("note:edit", { content });
-  lastSentContent = content;
-  hasPendingAck = true;
-  setStatus("\u00dcbertrage \u00c4nderungen ...", "info");
-};
-
-const scheduleSend = (immediate = false) => {
-  clearTimeout(sendTimer);
-  if (immediate) {
-    sendUpdate();
-  } else {
-    sendTimer = setTimeout(sendUpdate, AUTO_SEND_DELAY);
-  }
-};
-
-const integrateSharedContent = (payload) => {
-  if (!payload || typeof payload !== "object") return;
-  const { title = "", text = "", url = "" } = payload;
-  const shareSegments = [title, text, url]
-    .map((segment) => (typeof segment === "string" ? segment.trim() : ""))
-    .filter((segment) => segment.length > 0);
-  if (shareSegments.length === 0) return;
-  const snippet = shareSegments.join("\n");
-  const existing = noteField.value;
-  const separator = existing.trim().length > 0 ? "\n\n" : "";
-  noteField.value = `${existing}${separator}${snippet}`;
-  setStatus("Geteilter Inhalt \u00fcbernommen.", "success");
-  noteField.focus();
-  scheduleSend(true);
-};
-
-const handleServiceWorkerMessage = (event) => {
-  if (!event || typeof event.data !== "object" || event.data === null) return;
-  const { type, payload } = event.data;
-  if (type !== "share-target") return;
-  if (payload?.hasImages) {
-    loadGallery();
-  }
-  integrateSharedContent(payload);
-};
-
-socket.on("connect", () => {
-  isConnected = true;
-  setStatus("Verbunden \u2013 synchronisiere ...", "info");
-  if (noteField.value !== lastServerContent) {
-    scheduleSend(true);
-  } else {
-    socket.emit("note:fetch");
-  }
-  flushQueuedContent();
-});
-
-socket.io.on("reconnect", () => {
-  isConnected = true;
-  setStatus("Verbindung wiederhergestellt \u2013 synchronisiere ...", "info");
-  socket.emit("note:fetch");
-  flushQueuedContent();
-});
-
-socket.on("disconnect", (reason) => {
-  isConnected = false;
-  const readableReason = describeDisconnectReason(reason);
-  setStatus(
-    `Verbindung getrennt (${readableReason}). \u00c4nderungen werden lokal gehalten.`,
-    "error"
-  );
-});
-
-socket.io.on("reconnect_attempt", (attempt) => {
-  const suffix = typeof attempt === "number" ? ` (Versuch ${attempt})` : "";
-  setStatus(
-    `Versuche, die Socket-Verbindung wiederherzustellen${suffix} ...`,
-    "info"
-  );
-});
-
-socket.io.on("error", (err) => {
-  setStatus(
-    interpretSocketError("Socket-Verbindung fehlgeschlagen", err),
-    "error"
-  );
-});
-
-socket.io.on("connect_error", (err) => {
-  setStatus(
-    interpretSocketError("Verbindungsaufbau fehlgeschlagen", err),
-    "error"
-  );
-});
-
-socket.io.on("reconnect_error", (err) => {
-  setStatus(
-    interpretSocketError("Wiederverbindung fehlgeschlagen", err),
-    "error"
-  );
-});
-
-socket.io.on("reconnect_failed", (err) => {
-  setStatus(
-    interpretSocketError("Wiederverbindung endg\u00fcltig fehlgeschlagen", err),
-    "error"
-  );
-});
-
-socket.io.on("connect_timeout", () => {
-  setStatus(
-    "Zeit\u00fcberschreitung beim Verbindungsaufbau \u2013 bitte Netzwerk oder Server pr\u00fcfen.",
-    "error"
-  );
-});
-
-socket.on("note:error", (message) => {
-  setStatus(message ?? "Unbekannter Fehler beim Speichern.", "error");
-  hasPendingAck = false;
-  flushQueuedContent();
-});
-
-socket.on("note:state", (payload = {}) => {
-  const incoming = typeof payload === "object" && payload !== null ? payload : {};
-  applyRemoteState(incoming);
-});
-
-socket.on("note:lock", (payload = {}) => {
-  const lock =
-    typeof payload === "object" && payload !== null
-      ? {
-          holderId: payload.holderId ?? null,
-          expiresAt:
-            typeof payload.expiresAt === "number" ? payload.expiresAt : null,
-          isSelf: Boolean(payload.isSelf)
-        }
-      : { holderId: null, expiresAt: null };
-  applyLock(lock);
-});
-
-socket.on("note:unlock", () => {
-  applyLock(null);
-});
-
-noteField.addEventListener("input", () => {
-  scheduleSend(false);
-});
-
-noteField.addEventListener("paste", (event) => {
-  const items = event.clipboardData?.items ?? [];
-  const imageItems = Array.from(items).filter(
-    (item) => item.kind === "file" && item.type.startsWith("image/")
-  );
-  if (imageItems.length === 0) return;
-  event.preventDefault();
-  const files = imageItems.map((item) => item.getAsFile()).filter(Boolean);
-  uploadImages(files);
-});
-
-noteField.addEventListener("beforeinput", (event) => {
-  if (isLockedForCurrentUser()) {
-    event.preventDefault();
-    setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
-  }
-});
-
-if (fontDecreaseButton && fontIncreaseButton) {
-  fontDecreaseButton.addEventListener("click", () => {
-    applyFontSize(currentFontSizePx - FONT_STEP_PX);
-  });
-  fontIncreaseButton.addEventListener("click", () => {
-    applyFontSize(currentFontSizePx + FONT_STEP_PX);
-  });
-  initialiseFontSize();
-}
-
-if (clearButton) {
-  clearButton.addEventListener("click", () => {
-    if (isLockedForCurrentUser()) {
-      setStatus("\u00c4nderungen gesperrt \u2013 bitte kurz warten.", "info");
-      return;
-    }
-    if (noteField.value.trim().length === 0) {
-      setStatus("Arbeitsblatt ist bereits leer.", "info");
-      return;
-    }
-    const confirmed = window.confirm("Arbeitsblatt wirklich leeren?");
-    if (!confirmed) return;
-    noteField.value = "";
-    noteField.focus();
-    setStatus("Arbeitsblatt geleert \u2013 synchronisiere ...", "info");
-    scheduleSend(true);
-  });
-}
-
-if (imageUploadBtn && imageUploadInput) {
-  imageUploadBtn.addEventListener("click", () => imageUploadInput.click());
-  imageUploadInput.addEventListener("change", () => {
-    const files = Array.from(imageUploadInput.files ?? []);
-    imageUploadInput.value = "";
-    uploadImages(files);
-  });
-}
-
-window.addEventListener("beforeunload", () => {
-  if (noteField.value !== lastServerContent && isConnected) {
-    socket.emit("note:edit", { content: noteField.value });
-  }
-});
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("/service-worker.js")
-      .catch((err) => console.error("Service Worker registration failed:", err));
-  });
-}
-
-// Galerie beim Start laden
-loadGallery();
-
-
-const setEditingEnabled = (enabled) => {
-  noteField.readOnly = !enabled;
-  noteField.classList.toggle("is-locked", !enabled);
-  if (!enabled) {
-    noteField.blur();
-  }
-};
-
-const clearLockTimer = () => {
-  if (lockTimer) {
-    clearTimeout(lockTimer);
-    lockTimer = null;
-  }
-  if (lockCountdownInterval) {
-    clearInterval(lockCountdownInterval);
-    lockCountdownInterval = null;
-  }
-};
-
-const updateLockCountdownStatus = () => {
-  if (!currentLock) return;
-  const remainingMs = Math.max(0, currentLock.expiresAt - Date.now());
-  const remainingSeconds = Math.ceil(remainingMs / 1000);
-  setStatus(
-    `Bearbeitung durch anderen Nutzer gesperrt (${remainingSeconds}s)`,
-    "info"
-  );
-};
-
-const applyLock = (lock) => {
-  clearLockTimer();
-  currentLock = lock && lock.holderId ? lock : null;
-  if (!currentLock) {
-    const shouldNotify = wasLockedForUs;
-    wasLockedForUs = false;
-    setEditingEnabled(true);
-    if (shouldNotify) {
-      setStatus("Bearbeitung wieder m\u00f6glich.", "success");
-    }
-    flushQueuedContent();
-    return;
-  }
-
-  if (!currentLock.expiresAt) {
-    currentLock.expiresAt = Date.now() + 10000;
-  }
-
-  if (currentLock.isSelf || currentLock.holderId === socket.id) {
-    wasLockedForUs = false;
-    setEditingEnabled(true);
-    flushQueuedContent();
-    return;
-  }
-
-  wasLockedForUs = true;
-  setEditingEnabled(false);
-  const remainingMs = Math.max(0, currentLock.expiresAt - Date.now());
-  updateLockCountdownStatus();
-  lockCountdownInterval = setInterval(() => {
-    if (!currentLock) {
-      clearInterval(lockCountdownInterval);
-      lockCountdownInterval = null;
-      return;
-    }
-    updateLockCountdownStatus();
-  }, 1000);
-  lockTimer = setTimeout(() => {
-    lockTimer = null;
-    if (lockCountdownInterval) {
-      clearInterval(lockCountdownInterval);
-      lockCountdownInterval = null;
-    }
-    if (!currentLock) return;
-    setEditingEnabled(true);
-    currentLock = null;
-    setStatus("Bearbeitung wieder m\u00f6glich.", "success");
-    wasLockedForUs = false;
-    flushQueuedContent();
-  }, remainingMs);
-};
+})()
