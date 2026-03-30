@@ -1,51 +1,40 @@
 <!DOCTYPE html>
 <html lang="de">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Notiz Benduhn</title>
-    <meta name="theme-color" content="#1a73e8" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <link rel="manifest" href="./manifest.json" />
-    <link rel="icon" href="./icon.png" type="image/png" />
-    <link rel="apple-touch-icon" href="./icon-192.png" />
-    <link rel="stylesheet" href="./style.css?v=7" />
-  </head>
-  <body>
-    <main class="viewport">
-      <textarea
-        id="note"
-        placeholder="Gedanke festhalten ..."
-        aria-label="Notizfeld"
-        autofocus
-      ></textarea>
-      <div id="image-gallery" aria-label="Bilder"></div>
-    </main>
-    <div class="font-controls" role="group" aria-label="Schriftgröße anpassen">
-      <button id="font-decrease" type="button" aria-label="Schrift verkleinern">−</button>
-      <button id="font-increase" type="button" aria-label="Schrift vergrößern">+</button>
-      <button id="image-upload-btn" type="button" aria-label="Bild hochladen">📎</button>
-      <button
-        id="note-clear"
-        class="clear-button"
-        type="button"
-        aria-label="Arbeitsblatt leeren"
-      >
-        CLR
-      </button>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>notiz</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <span class="logo">notiz</span>
+    <div class="header-actions">
+      <span id="save-status" class="save-status" aria-live="polite"></span>
+      <button id="btn-clear" type="button">Leeren</button>
     </div>
-    <input
-      type="file"
-      id="image-upload-input"
-      accept="image/*"
-      multiple
-      style="display:none"
-      aria-hidden="true"
-    />
-    <div id="status" data-variant="idle">Bereit.</div>
-    <div class="app-version" aria-label="Version">v0.1.0</div>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="./app.js?v=3"></script>
-  </body>
+  </header>
+  <div id="toolbar" role="toolbar" aria-label="Formatierung">
+    <button data-action="h1" title="Ueberschrift 1">H1</button>
+    <button data-action="h2" title="Ueberschrift 2">H2</button>
+    <div class="sep" role="separator"></div>
+    <button data-action="bold" title="Fett"><b>B</b></button>
+    <button data-action="italic" title="Kursiv"><i>I</i></button>
+    <div class="sep" role="separator"></div>
+    <button data-action="bullet" title="Aufzaehlung">&#x2261; Liste</button>
+    <button data-action="ordered" title="Nummerierte Liste">&#x2460; Numm.</button>
+    <div class="sep" role="separator"></div>
+    <button data-action="code" title="Code-Block">&lt;/&gt; Code</button>
+    <button data-action="image" title="Bild hochladen">&#x1F4CE; Bild</button>
+  </div>
+  <div id="editor-wrapper">
+    <div id="editor"></div>
+  </div>
+  <footer>
+    <span>/ fuer Befehle &middot; Bild per Drag &amp; Drop oder Einf&uuml;gen</span>
+    <span id="last-saved"></span>
+  </footer>
+  <input type="file" id="image-input" accept="image/*" style="display:none" aria-hidden="true">
+  <script type="module" src="/app.js"></script>
+</body>
 </html>
