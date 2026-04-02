@@ -4,14 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>notiz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css">
+  <script>
+    // Theme vor dem Rendern setzen (verhindert Flash)
+    (function() {
+      var t = localStorage.getItem('copy-theme');
+      var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (t === 'dark' || (!t && d)) document.documentElement.setAttribute('data-theme', 'dark');
+    })();
+  </script>
 </head>
 <body>
   <header>
-    <span class="logo">notiz</span>
+    <span class="logo">NOTIZ</span>
     <div class="header-actions">
       <span id="save-status" class="save-status" aria-live="polite"></span>
-      <button id="btn-clear" type="button">Leeren</button>
+      <button id="btn-clear" type="button" title="Notiz leeren">Leeren</button>
+      <button id="btn-theme" type="button" aria-label="Erscheinungsbild wechseln" title="Erscheinungsbild wechseln">
+        <svg id="i-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+        </svg>
+        <svg id="i-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
     </div>
   </header>
   <div id="toolbar" role="toolbar" aria-label="Formatierung">
@@ -36,5 +56,30 @@
   </footer>
   <input type="file" id="image-input" accept="image/*" style="display:none" aria-hidden="true">
   <script type="module" src="/app.js"></script>
+  <script>
+    // Theme-Toggle Logik
+    var btnTheme = document.getElementById('btn-theme');
+    var iSun = document.getElementById('i-sun');
+    var iMoon = document.getElementById('i-moon');
+
+    function syncThemeIcons() {
+      var dark = document.documentElement.hasAttribute('data-theme');
+      iSun.style.display  = dark ? 'block' : 'none';
+      iMoon.style.display = dark ? 'none'  : 'block';
+    }
+    syncThemeIcons();
+
+    btnTheme.addEventListener('click', function() {
+      var isDark = document.documentElement.hasAttribute('data-theme');
+      if (isDark) {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('copy-theme', 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        localStorage.setItem('copy-theme', 'dark');
+      }
+      syncThemeIcons();
+    });
+  </script>
 </body>
 </html>
