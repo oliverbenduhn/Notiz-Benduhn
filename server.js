@@ -65,10 +65,18 @@ app.put('/api/note', (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/images', upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Keine Datei.' })
-  db.prepare('INSERT INTO note_images (filename) VALUES (?)').run(req.file.filename)
-  res.json({ url: `/uploads/${req.file.filename}` })
+app.post('/api/images', (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'Datei zu gross (max. 10 MB).' })
+      }
+      return res.status(400).json({ error: err.message || 'Upload fehlgeschlagen.' })
+    }
+    if (!req.file) return res.status(400).json({ error: 'Keine Datei.' })
+    db.prepare('INSERT INTO note_images (filename) VALUES (?)').run(req.file.filename)
+    res.json({ url: `/uploads/${req.file.filename}` })
+  })
 })
 
 app.delete('/api/images/:filename', (req, res) => {

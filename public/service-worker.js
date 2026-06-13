@@ -1,9 +1,9 @@
-const CACHE_NAME = "notiz-benduhn-static-v4";
+const CACHE_NAME = "notiz-benduhn-static-v8";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/style.css?v=4",
-  "/app.js?v=3",
+  "/app.js?v=8",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",

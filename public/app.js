@@ -54,7 +54,10 @@ async function uploadImage(file) {
   const form = new FormData()
   form.append('image', file, file.name)
   const res = await fetch('/api/images', { method: 'POST', body: form })
-  if (!res.ok) throw new Error('Upload fehlgeschlagen')
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || 'Upload fehlgeschlagen')
+  }
   const { url } = await res.json()
   return url
 }
@@ -69,7 +72,11 @@ async function deleteImageFile(src) {
 async function insertImageFromFile(file) {
   try {
     const url = await uploadImage(file)
-    editor.chain().focus().setImage({ src: url }).run()
+    editor.chain()
+      .focus()
+      .insertContent({ type: 'image', attrs: { src: url, alt: '', title: null } })
+      .run()
+    wrapImages()
     showStatus('Gespeichert.', 'saved')
   } catch (err) {
     console.error(err)
