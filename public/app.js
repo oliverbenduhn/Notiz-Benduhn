@@ -4,6 +4,15 @@ import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2'
 import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2'
 import Suggestion from 'https://esm.sh/@tiptap/suggestion@2'
 
+// Tiptap + Plugins via ESM-CDN (kein Build-Step). Versionen bündelweise anheben.
+const TIPTAP_CDN = {
+  core:     'https://esm.sh/@tiptap/core@2',
+  kit:      'https://esm.sh/@tiptap/starter-kit@2',
+  image:    'https://esm.sh/@tiptap/extension-image@2',
+  placeholder: 'https://esm.sh/@tiptap/extension-placeholder@2',
+  suggestion: 'https://esm.sh/@tiptap/suggestion@2',
+}
+
 // Editor-Hülle: Tiptap-Instanz, eine geteilte Notiz, REST-Sync (PUT/GET /api/note).
 // Bilder als NodeView (siehe createImageNodeView), Slash-Menu via Suggestion-Plugin.
 // Modal-Bestätigungen via natives <dialog> (siehe confirmDialog).
@@ -128,6 +137,28 @@ function clearChildren(el) {
   while (el.firstChild) el.removeChild(el.firstChild)
 }
 
+// Tiptap-NodeView-Handler: aus createImageNodeView ausgelagert, damit der
+// DOM-Aufbau oben linear lesbar bleibt und die Click-Logik einzeln testbar ist.
+
+// Klick aufs Bild öffnet das Vollbild-Overlay. stopPropagation verhindert,
+// dass ProseMirror die Auswahl auf den Node setzt (würde Selection-Ring zeigen).
+function onImageClick(src, event) {
+  event.stopPropagation()
+  event.preventDefault()
+  openImageOverlay(src)
+}
+
+// Klick auf den L\u00f6schen-Button: Confirm-Dialog \u2192 Doc-Position ermitteln
+// \u2192 range l\u00f6schen \u2192 Datei vom Server l\u00f6schen (fire-and-forget).
+async function onImageDelete({ src, editor, getPos, nodeSize }) {
+  if (!await confirmDialog('Bild loeschen?')) return
+  const pos = typeof getPos === 'function' ? getPos() : null
+  if (typeof pos === 'number') {
+    editor.chain().focus().deleteRange({ from: pos, to: pos + nodeSize }).run()
+  }
+  deleteImageFile(src).catch(() => {})
+}
+
 // Tiptap-NodeView für Bilder -- SANCTIONED-PATTERN.
 // ProseMirror kontrolliert den Wrapper; externe DOM-Mutation (z. B. nachträgliches
 // insertBefore + appendChild) löst eine onUpdate → wrapImages → onUpdate-Schleife aus.
@@ -140,11 +171,7 @@ function createImageNodeView(props, ed) {
   const img = document.createElement('img')
   img.src = node.attrs.src
   img.alt = node.attrs.alt ?? ''
-  img.addEventListener('click', e => {
-    e.stopPropagation()
-    e.preventDefault()
-    openImageOverlay(img.src)
-  })
+  img.addEventListener('click', e => onImageClick(img.src, e))
   wrapper.appendChild(img)
 
   const del = document.createElement('button')
@@ -153,16 +180,12 @@ function createImageNodeView(props, ed) {
   del.textContent = '\u00d7'
   del.title = 'Bild loeschen'
   del.setAttribute('aria-label', 'Bild loeschen')
-  del.addEventListener('click', async e => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!await confirmDialog('Bild loeschen?')) return
-    const pos = typeof getPos === 'function' ? getPos() : null
-    if (typeof pos === 'number') {
-      ed.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
-    }
-    deleteImageFile(img.src).catch(() => {})
-  })
+  del.addEventListener('click', () => onImageDelete({
+    src: img.src,
+    editor: ed,
+    getPos,
+    nodeSize: node.nodeSize,
+  }))
   wrapper.appendChild(del)
 
   return { dom: wrapper }
