@@ -1,9 +1,16 @@
 import express from 'express'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import Database from 'better-sqlite3'
 import multer from 'multer'
 import { mkdirSync, unlinkSync } from 'node:fs'
+import {
+  openDatabase,
+  getNote,
+  updateNote,
+  recordImage,
+  findImage,
+  removeImage,
+} from './lib/db.js'
 
 // Notiz-Benduhn HTTP-API.
 // Eine geteilte Notiz (note.id = 1), Bild-Uploads unter UPLOADS_DIR.
@@ -17,22 +24,7 @@ const UPLOADS_DIR = process.env.UPLOADS_DIR ?? path.join(DATA_DIR, 'uploads')
 mkdirSync(DATA_DIR, { recursive: true })
 mkdirSync(UPLOADS_DIR, { recursive: true })
 
-const db = new Database(DB_PATH)
-db.pragma('journal_mode = WAL')
-
-db.prepare(`CREATE TABLE IF NOT EXISTS note (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  content TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-)`).run()
-
-db.prepare(`CREATE TABLE IF NOT EXISTS note_images (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  filename TEXT NOT NULL UNIQUE,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-)`).run()
-
-db.prepare(`INSERT OR IGNORE INTO note (id, content) VALUES (1, '{}')`).run()
+const db = openDatabase(DB_PATH)
 
 // Multer-Disk-Storage: Präfix mit ms-Zeitstempel verhindert Kollisionen
 // und liefert stabile Sortierung; Safe-Rewrite schützt vor Path-Traversal.
@@ -56,8 +48,7 @@ app.use(express.static(path.join(__dirname, 'public')))
 app.use('/uploads', express.static(UPLOADS_DIR))
 
 app.get('/api/note', (_req, res) => {
-  const row = db.prepare('SELECT content FROM note WHERE id = 1').get()
-  res.json({ content: JSON.parse(row.content) })
+  res.json({ content: getNote(db) })
 })
 
 app.put('/api/note', (req, res) => {
@@ -65,9 +56,7 @@ app.put('/api/note', (req, res) => {
   if (!content || typeof content !== 'object') {
     return res.status(400).json({ error: 'Ungültiger Inhalt.' })
   }
-  db.prepare(
-    'UPDATE note SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1'
-  ).run(JSON.stringify(content))
+  updateNote(db, content)
   res.json({ ok: true })
 })
 
@@ -80,7 +69,7 @@ app.post('/api/images', (req, res) => {
       return res.status(400).json({ error: err.message || 'Upload fehlgeschlagen.' })
     }
     if (!req.file) return res.status(400).json({ error: 'Keine Datei.' })
-    db.prepare('INSERT INTO note_images (filename) VALUES (?)').run(req.file.filename)
+    recordImage(db, req.file.filename)
     res.json({ url: `/uploads/${req.file.filename}` })
   })
 })
@@ -92,10 +81,8 @@ app.delete('/api/images/:filename', (req, res) => {
   if (!target.startsWith(UPLOADS_DIR + path.sep)) {
     return res.status(400).json({ error: 'Ungültiger Dateiname.' })
   }
-  // Erst prüfen ob Datei in DB existiert
-  const row = db.prepare('SELECT id FROM note_images WHERE filename = ?').get(filename)
-  if (!row) return res.status(404).json({ error: 'Nicht gefunden.' })
-  db.prepare('DELETE FROM note_images WHERE filename = ?').run(filename)
+  if (!findImage(db, filename)) return res.status(404).json({ error: 'Nicht gefunden.' })
+  removeImage(db, filename)
   try { unlinkSync(target) } catch { /* ignoriere wenn Datei fehlt */ }
   res.json({ ok: true })
 })
