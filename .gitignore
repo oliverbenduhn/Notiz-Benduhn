@@ -31,3 +31,8 @@ logs/
 # Build-Verzeichnisse
 dist/
 build/
+
+# Playwright
+/test-results/
+/playwright-report/
+/data/
