@@ -4,6 +4,10 @@ import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2'
 import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2'
 import Suggestion from 'https://esm.sh/@tiptap/suggestion@2'
 
+// Editor-Hülle: Tiptap-Instanz, eine geteilte Notiz, REST-Sync (PUT/GET /api/note).
+// Bilder als NodeView (siehe createImageNodeView), Slash-Menu via Suggestion-Plugin.
+// Modal-Bestätigungen via natives <dialog> (siehe confirmDialog).
+
 // DOM-Refs
 const editorEl   = document.querySelector('#editor')
 const saveStatus = document.querySelector('#save-status')
@@ -31,7 +35,8 @@ function updateLastSaved() {
   setTimeout(() => { lastSaved.textContent = '' }, 5000)
 }
 
-// Bestätigungsdialog (native <dialog>) -- ersetzt window.confirm
+// Bestätigungsdialog via natives <dialog>.
+// Ersetzt window.confirm: themed, tastaturbedienbar, returnValue via submit-button value.
 function confirmDialog(message) {
   return new Promise(resolve => {
     const dlg = document.createElement('dialog')
@@ -123,8 +128,10 @@ function clearChildren(el) {
   while (el.firstChild) el.removeChild(el.firstChild)
 }
 
-// Tiptap-NodeView für Bilder -- ersetzt wrapImages().
-// ProseMirror kontrolliert jetzt den Wrapper, kein externer DOM-Mutation-Loop.
+// Tiptap-NodeView für Bilder -- SANCTIONED-PATTERN.
+// ProseMirror kontrolliert den Wrapper; externe DOM-Mutation (z. B. nachträgliches
+// insertBefore + appendChild) löst eine onUpdate → wrapImages → onUpdate-Schleife aus.
+// Position für Delete via getPos() -- die node-Referenz wird nach der nächsten Transaktion stale.
 function createImageNodeView(props, ed) {
   const { node, getPos } = props
   const wrapper = document.createElement('div')
@@ -199,6 +206,8 @@ const SLASH_COMMANDS = [
     cmd: (ed, range) => { ed.chain().focus().deleteRange(range).run(); imageInput.click() } },
 ]
 
+// Slash-Filter: matcht Titel + Alias-Array (kw).
+// Aliase decken übliche Kurzformen ab (h1, bullet, code, ...) und englische Synonyme.
 function matchCommand(c, q) {
   if (!q) return true
   const ql = q.toLowerCase()

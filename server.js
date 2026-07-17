@@ -5,6 +5,10 @@ import Database from 'better-sqlite3'
 import multer from 'multer'
 import { mkdirSync, unlinkSync } from 'node:fs'
 
+// Notiz-Benduhn HTTP-API.
+// Eine geteilte Notiz (note.id = 1), Bild-Uploads unter UPLOADS_DIR.
+// Schema-Init läuft idempotent beim Start; Spiegelung in scripts/init-db.js.
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, 'data', 'notiz.db')
 const DATA_DIR = path.dirname(DB_PATH)
@@ -30,6 +34,8 @@ db.prepare(`CREATE TABLE IF NOT EXISTS note_images (
 
 db.prepare(`INSERT OR IGNORE INTO note (id, content) VALUES (1, '{}')`).run()
 
+// Multer-Disk-Storage: Präfix mit ms-Zeitstempel verhindert Kollisionen
+// und liefert stabile Sortierung; Safe-Rewrite schützt vor Path-Traversal.
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {

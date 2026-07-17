@@ -3,6 +3,14 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// E2E-Suite: 5 User-Flows + 2 UX-Audits.
+// Hinweise für Agenten, die hier Tests ergänzen:
+//  - workers=1 in playwright.config.js -- alle Specs teilen die Singleton-Notiz (id=1).
+//  - beforeEach setzt die Notiz auf {type:"doc",content:[]} zurück, sonst kollidieren Specs.
+//  - Confirm-Dialoge sind native <dialog>; page.on('dialog') greift NICHT -- stattdessen
+//    auf .confirm-dialog button[data-action="ok"] klicken.
+//  - Tiptap lädt von esm.sh; erste Spec kann 2-3 s länger brauchen (Module-Cache).
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_IMAGE = path.join(__dirname, "fixtures", "pixel.png");
 
