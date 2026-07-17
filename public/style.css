@@ -8,7 +8,7 @@
   --border:      #e0ddd8;
   --border-sub:  #edeae5;
   --text:        #1a1a18;
-  --text-muted:  #7a7772;
+  --text-muted:  #5f5d59;
   --accent:      #d97706;
   --accent-hov:  #b45309;
   --accent-soft: #fef3c7;
@@ -28,7 +28,7 @@
   --border:      #2a2a2a;
   --border-sub:  #222222;
   --text:        #e4e4dc;
-  --text-muted:  #6a6a62;
+  --text-muted:  #9a9a92;
   --accent:      #f59e0b;
   --accent-hov:  #fbbf24;
   --accent-soft: #1c1507;
@@ -70,7 +70,14 @@ header {
   letter-spacing: 0.2em;
   color: var(--text);
   flex-shrink: 0;
+  margin: 0; /* <h1>-Reset, sonst Top-Margin im Header */
 }
+
+/* Theme-Icons rein über CSS steuern -- kein JS-Toggle nötig */
+.theme-icon { display: block; }
+#i-moon { display: none; }
+[data-theme="dark"] #i-sun  { display: none; }
+[data-theme="dark"] #i-moon { display: block; }
 
 .header-actions { display: flex; align-items: center; gap: 0.35rem; }
 
@@ -211,7 +218,6 @@ button.active { background: var(--accent-soft); color: var(--accent); }
   border-radius: var(--r);
   margin: 0.75rem 0;
   cursor: pointer;
-  border: 1px solid var(--border);
 }
 .tiptap img.ProseMirror-selectednode {
   outline: 2px solid var(--accent);
@@ -279,11 +285,23 @@ body.drag-over #editor-wrapper {
 .confirm-dialog menu button.danger:hover { background: #fef2f2; }
 [data-theme="dark"] .confirm-dialog menu button.danger:hover { background: #1f0a0a; }
 
-/* Touch-Geräte: größere Touch-Targets + immer sichtbarer Bild-Lösch-Button */
+/* Touch-Geräte: größere Touch-Targets + immer sichtbarer Bild-Lösch-Button.
+   X-Button wandert unten-rechts und wird kleiner, damit er beim Tippen aufs
+   Bild nicht versehentlich ausgelöst wird (Audit M3). */
 @media (hover: none) {
   #toolbar { gap: 4px; padding: 0.4rem 0.75rem; }
   #toolbar button { min-height: 44px; padding: 0 0.85rem; font-size: 0.85rem; }
-  .image-delete-btn { opacity: 1; }
+  .image-delete-btn {
+    opacity: 1;
+    top: auto;
+    bottom: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    font-size: 0.7rem;
+  }
+  /* Header-Buttons ebenfalls auf 44px (Audit H10) */
+  header button { min-width: 44px; min-height: 44px; }
 }
 
 .tiptap p.is-editor-empty:first-child::before {
@@ -332,16 +350,28 @@ body.drag-over #editor-wrapper {
 }
 
 /* Footer */
-footer {
+footer.app-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0.35rem 1rem;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
 #app-version { opacity: 0.6; margin-right: 0.25rem; }
+
+/* Legal-Footer: themable, kein Inline-Style (Audit M6). */
+.legal-footer {
+  text-align: center;
+  padding: 0.75rem 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-sub);
+  background: var(--surface);
+}
+.legal-footer a { color: var(--text-muted); text-decoration: none; }
+.legal-footer a:hover { color: var(--text); text-decoration: underline; }

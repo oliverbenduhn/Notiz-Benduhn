@@ -4,15 +4,6 @@ import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2'
 import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2'
 import Suggestion from 'https://esm.sh/@tiptap/suggestion@2'
 
-// Tiptap + Plugins via ESM-CDN (kein Build-Step). Versionen bündelweise anheben.
-const TIPTAP_CDN = {
-  core:     'https://esm.sh/@tiptap/core@2',
-  kit:      'https://esm.sh/@tiptap/starter-kit@2',
-  image:    'https://esm.sh/@tiptap/extension-image@2',
-  placeholder: 'https://esm.sh/@tiptap/extension-placeholder@2',
-  suggestion: 'https://esm.sh/@tiptap/suggestion@2',
-}
-
 // Editor-Hülle: Tiptap-Instanz, eine geteilte Notiz, REST-Sync (PUT/GET /api/note).
 // Bilder als NodeView (siehe createImageNodeView), Slash-Menu via Suggestion-Plugin.
 // Modal-Bestätigungen via natives <dialog> (siehe confirmDialog).
@@ -25,7 +16,8 @@ const btnClear   = document.querySelector('#btn-clear')
 const imageInput = document.querySelector('#image-input')
 const toolbar    = document.querySelector('#toolbar')
 
-// Status-Anzeige
+// Status-Anzeige -- 5s Auto-Clear reicht screenreadern, sich anzuhören
+// (Audit N6). "saved"-Variante bleibt sichtbar, bis sie überschrieben wird.
 let saveTimer = null
 function showStatus(text, variant) {
   saveStatus.textContent = text
@@ -35,7 +27,7 @@ function showStatus(text, variant) {
     saveTimer = setTimeout(() => {
       saveStatus.textContent = ''
       saveStatus.className = 'save-status'
-    }, 3000)
+    }, 5000)
   }
 }
 
@@ -45,19 +37,33 @@ function updateLastSaved() {
 }
 
 // Bestätigungsdialog via natives <dialog>.
-// Ersetzt window.confirm: themed, tastaturbedienbar, returnValue via submit-button value.
+// autofocus auf "Abbrechen" -- die sichere Wahl (Audit M14).
+// textContent statt innerHTML für die Message, damit kein XSS-Vektor
+// hereinschleicht, falls später variabler Text eingesetzt wird (Audit M15).
 function confirmDialog(message) {
   return new Promise(resolve => {
     const dlg = document.createElement('dialog')
     dlg.className = 'confirm-dialog'
-    dlg.innerHTML = `
-      <form method="dialog">
-        <p>${message}</p>
-        <menu>
-          <button type="submit" value="cancel" data-action="cancel">Abbrechen</button>
-          <button type="submit" value="ok" data-action="ok" class="danger">OK</button>
-        </menu>
-      </form>`
+    const form = document.createElement('form')
+    form.method = 'dialog'
+    const p = document.createElement('p')
+    p.textContent = message
+    const menu = document.createElement('menu')
+    const cancel = document.createElement('button')
+    cancel.type = 'submit'
+    cancel.value = 'cancel'
+    cancel.dataset.action = 'cancel'
+    cancel.textContent = 'Abbrechen'
+    cancel.autofocus = true
+    const ok = document.createElement('button')
+    ok.type = 'submit'
+    ok.value = 'ok'
+    ok.dataset.action = 'ok'
+    ok.className = 'danger'
+    ok.textContent = 'OK'
+    menu.append(cancel, ok)
+    form.append(p, menu)
+    dlg.append(form)
     dlg.addEventListener('close', () => {
       resolve(dlg.returnValue === 'ok')
       dlg.remove()
@@ -67,12 +73,13 @@ function confirmDialog(message) {
   })
 }
 
-// API
+// API -- liefert/akzeptiert jetzt updatedAt, damit der Client Remote-Änderungen
+// erkennen kann (Audit K3).
 async function loadNote() {
   const res = await fetch('/api/note')
   if (!res.ok) throw new Error('Laden fehlgeschlagen')
-  const { content } = await res.json()
-  return content
+  const { content, updatedAt } = await res.json()
+  return { content, updatedAt }
 }
 
 async function saveNote(content) {
@@ -81,21 +88,34 @@ async function saveNote(content) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content })
   })
-  if (!res.ok) throw new Error('Speichern fehlgeschlagen')
-}
-
-// Bild-Upload
-async function uploadImage(file) {
-  showStatus('Laedt hoch...', 'saving')
-  const form = new FormData()
-  form.append('image', file, file.name)
-  const res = await fetch('/api/images', { method: 'POST', body: form })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || 'Upload fehlgeschlagen')
+    throw new Error(body.error || 'Speichern fehlgeschlagen')
   }
-  const { url } = await res.json()
-  return url
+  const { updatedAt } = await res.json()
+  return updatedAt
+}
+
+// Bild-Upload -- zählt laufende Uploads, damit Multi-Image-Drop einen
+// sinnvollen Status zeigt statt "Speichern..." (Audit H9).
+let uploadsInFlight = 0
+async function uploadImage(file) {
+  uploadsInFlight++
+  showStatus(`Lädt hoch... (${uploadsInFlight})`, 'saving')
+  try {
+    const form = new FormData()
+    form.append('image', file, file.name)
+    const res = await fetch('/api/images', { method: 'POST', body: form })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error || 'Upload fehlgeschlagen')
+    }
+    const { url } = await res.json()
+    return url
+  } finally {
+    uploadsInFlight--
+    if (uploadsInFlight === 0) showStatus('Gespeichert.', 'saved')
+  }
 }
 
 async function deleteImageFile(src) {
@@ -105,17 +125,22 @@ async function deleteImageFile(src) {
   await fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
 }
 
-// Bild-Vollbild-Overlay (DOM-leicht)
+// Bild-Vollbild-Overlay (mit Esc + role=dialog + Tastatur-Fokus, Audit M4)
 function openImageOverlay(src) {
   const overlay = document.createElement('div')
   overlay.className = 'image-overlay'
+  overlay.setAttribute('role', 'dialog')
+  overlay.setAttribute('aria-label', 'Bild Vollbild')
+  overlay.tabIndex = -1
   const big = document.createElement('img')
   big.src = src
   big.alt = ''
   overlay.appendChild(big)
   const close = () => overlay.remove()
   overlay.addEventListener('click', close)
+  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') close() })
   document.body.appendChild(overlay)
+  overlay.focus()
 }
 
 async function insertImageFromFile(file) {
@@ -125,7 +150,6 @@ async function insertImageFromFile(file) {
       .focus()
       .insertContent({ type: 'image', attrs: { src: url, alt: '', title: null } })
       .run()
-    showStatus('Gespeichert.', 'saved')
   } catch (err) {
     console.error(err)
     showStatus('Upload fehlgeschlagen.', 'error')
@@ -137,9 +161,6 @@ function clearChildren(el) {
   while (el.firstChild) el.removeChild(el.firstChild)
 }
 
-// Tiptap-NodeView-Handler: aus createImageNodeView ausgelagert, damit der
-// DOM-Aufbau oben linear lesbar bleibt und die Click-Logik einzeln testbar ist.
-
 // Klick aufs Bild öffnet das Vollbild-Overlay. stopPropagation verhindert,
 // dass ProseMirror die Auswahl auf den Node setzt (würde Selection-Ring zeigen).
 function onImageClick(src, event) {
@@ -148,13 +169,17 @@ function onImageClick(src, event) {
   openImageOverlay(src)
 }
 
-// Klick auf den L\u00f6schen-Button: Confirm-Dialog \u2192 Doc-Position ermitteln
-// \u2192 range l\u00f6schen \u2192 Datei vom Server l\u00f6schen (fire-and-forget).
+// Bild löschen: erst Node aus dem Doc, dann Datei vom Server. Wenn der
+// Doc-Delete scheitert, lassen wir die Datei liegen -- sonst zeigt der Doc
+// ins Leere (Audit M13).
 async function onImageDelete({ src, editor, getPos, nodeSize }) {
   if (!await confirmDialog('Bild loeschen?')) return
   const pos = typeof getPos === 'function' ? getPos() : null
-  if (typeof pos === 'number') {
-    editor.chain().focus().deleteRange({ from: pos, to: pos + nodeSize }).run()
+  if (typeof pos !== 'number') return
+  const removed = editor.chain().focus().deleteRange({ from: pos, to: pos + nodeSize }).run()
+  if (!removed) {
+    showStatus('Löschen fehlgeschlagen.', 'error')
+    return
   }
   deleteImageFile(src).catch(() => {})
 }
@@ -191,30 +216,43 @@ function createImageNodeView(props, ed) {
   return { dom: wrapper }
 }
 
-// Auto-Save
+// Auto-Save -- tracked pendingContent, damit pagehide den letzten Stand
+// noch wegschicken kann (Audit H7).
 let autoSaveTimer = null
-function scheduleAutoSave() {
-  clearTimeout(autoSaveTimer)
-  showStatus('Speichern...', 'saving')
-  autoSaveTimer = setTimeout(async () => {
-    try {
-      await saveNote(editor.getJSON())
-      showStatus('Gespeichert.', 'saved')
-      updateLastSaved()
-    } catch {
-      showStatus('Speichern fehlgeschlagen.', 'error')
-    }
-  }, 800)
+let pendingContent = null
+let lastSavedContent = null  // JSON-String des zuletzt gespeicherten Stands
+
+async function flushPending() {
+  if (!pendingContent) return
+  try {
+    const updatedAt = await saveNote(pendingContent)
+    knownUpdatedAt = updatedAt
+    lastSavedContent = JSON.stringify(pendingContent)
+    pendingContent = null
+    showStatus('Gespeichert.', 'saved')
+    updateLastSaved()
+  } catch {
+    showStatus('Speichern fehlgeschlagen.', 'error')
+  }
 }
 
-// Slash-Menue (mit Aliasen + Guard gegen undefined)
+function scheduleAutoSave() {
+  if (loadFailed) return
+  pendingContent = editor.getJSON()
+  clearTimeout(autoSaveTimer)
+  showStatus('Speichern...', 'saving')
+  autoSaveTimer = setTimeout(flushPending, 800)
+}
+
+// Slash-Menue -- benutzt toggle* statt setNode, damit der zweite /h1
+// den H1 wieder entfernt (Audit M11).
 const SLASH_COMMANDS = [
   { title: 'Ueberschrift 1', kw: ['h1','ueberschrift 1','ueberschrift','heading 1','heading1'],
     icon: 'H1',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run() },
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleHeading({ level: 1 }).run() },
   { title: 'Ueberschrift 2', kw: ['h2','ueberschrift 2','heading 2','heading2'],
     icon: 'H2',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run() },
+    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleHeading({ level: 2 }).run() },
   { title: 'Aufzaehlung', kw: ['ul','bullet','liste','list','aufzaehlung','aufzählung'],
     icon: '=',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleBulletList().run() },
@@ -230,7 +268,6 @@ const SLASH_COMMANDS = [
 ]
 
 // Slash-Filter: matcht Titel + Alias-Array (kw).
-// Aliase decken übliche Kurzformen ab (h1, bullet, code, ...) und englische Synonyme.
 function matchCommand(c, q) {
   if (!q) return true
   const ql = q.toLowerCase()
@@ -302,8 +339,8 @@ const SlashMenu = Extension.create({
             positionSlashMenu(popup, props.clientRect?.())
           },
           onKeyDown(props) {
-            // Tiptap's Suggestion-Plugin liefert in onKeyDown nur {editor, event, range}.
-            // query und items aus dem range ableiten.
+            // Suggestion liefert in onKeyDown nur {editor, event, range}.
+            // query/items aus dem range ableiten (Audit AGENTS §Tiptap-gotchas).
             const ed = props.editor ?? editor
             const text = ed.state.doc.textBetween(props.range.from, props.range.to, '\n') ?? ''
             const query = text.startsWith('/') ? text.slice(1) : text
@@ -320,11 +357,14 @@ const SlashMenu = Extension.create({
               return true
             }
             if (props.event.key === 'Enter') {
-              items[selected]?.cmd(editor, props.range)
+              // Modul-Closure statt props.editor: bleibt konsistent mit
+              // mousedown-Pfad und matcht der etablierten Editor-Referenz
+              // (Audit M12).
+              items[selected]?.cmd(ed, props.range)
               return true
             }
             if (props.event.key === 'Escape') {
-              props.editor.chain().focus().run()
+              ed.chain().focus().run()
               return true
             }
             return false
@@ -373,7 +413,7 @@ const editor = new Editor({
   onUpdate() { scheduleAutoSave() }
 })
 
-// Toolbar
+// Toolbar -- setzt aria-pressed für Screenreader-Toggle-State (Audit N5).
 toolbar.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]')
   if (!btn) return
@@ -403,6 +443,7 @@ function updateToolbarState() {
       case 'code':    active = editor.isActive('codeBlock'); break
     }
     btn.classList.toggle('active', active)
+    btn.setAttribute('aria-pressed', String(active))
   })
 }
 editor.on('selectionUpdate', updateToolbarState)
@@ -414,18 +455,31 @@ imageInput.addEventListener('change', () => {
   imageInput.value = ''
 })
 
-// Drag-Over-Indikator
-document.addEventListener('dragover', e => {
+// Drag-Over-Indikator -- Counter-Ansatz statt relatedTarget-Filter,
+// kein Flackern mehr beim Drag über Child-Elemente (Audit M2).
+let dragCounter = 0
+document.addEventListener('dragenter', e => {
   const hasImage = Array.from(e.dataTransfer?.items ?? [])
     .some(i => i.kind === 'file' && i.type.startsWith('image/'))
-  if (hasImage) { e.preventDefault(); document.body.classList.add('drag-over') }
+  if (!hasImage) return
+  dragCounter++
+  e.preventDefault()
+  document.body.classList.add('drag-over')
 })
-document.addEventListener('dragleave', e => {
-  if (!e.relatedTarget || e.relatedTarget === document.documentElement) {
+document.addEventListener('dragleave', () => {
+  dragCounter--
+  if (dragCounter <= 0) {
+    dragCounter = 0
     document.body.classList.remove('drag-over')
   }
 })
-document.addEventListener('drop', () => document.body.classList.remove('drag-over'))
+document.addEventListener('dragover', e => {
+  if (dragCounter > 0) e.preventDefault()
+})
+document.addEventListener('drop', () => {
+  dragCounter = 0
+  document.body.classList.remove('drag-over')
+})
 
 // Leeren
 btnClear.addEventListener('click', async () => {
@@ -434,16 +488,85 @@ btnClear.addEventListener('click', async () => {
   scheduleAutoSave()
 })
 
-// Initialer Load
+// Service-Worker registrieren -- ohne ihn ist Cache, Offline und Share-Target
+// inaktiv (Audit K1).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js').catch(err => {
+    console.error('Service-Worker-Registrierung fehlgeschlagen:', err)
+  })
+
+  // Share-Target: Texte + Bilder aus Android-Share landen direkt im Editor
+  // (Audit K2).
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type !== 'share-target') return
+    const { title, text, url, imageUrls } = e.data.payload || {}
+    const textParts = [title, text, url].filter(Boolean)
+    if (textParts.length > 0) {
+      editor.chain().focus().insertContent(textParts.join('\n\n')).run()
+    }
+    for (const imgUrl of imageUrls || []) {
+      editor.chain()
+        .focus()
+        .insertContent({ type: 'image', attrs: { src: imgUrl, alt: '', title: null } })
+        .run()
+    }
+  })
+}
+
+// pagehide -- letzten Stand synchron wegschicken, damit der 800ms-Debounce
+// nicht zum Datenverlust wird (Audit H7). keepalive erlaubt dem Browser,
+// den Tab sofort zu schließen.
+window.addEventListener('pagehide', () => {
+  if (!pendingContent) return
+  try {
+    fetch('/api/note', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: pendingContent }),
+      keepalive: true
+    })
+  } catch (err) {
+    console.error('pagehide flush fehlgeschlagen:', err)
+  }
+})
+
+// Polling: prüft alle 5s auf Remote-Änderungen. Bei Versatz mit ungespeicherten
+// lokalen Edits nur Hinweis, sonst stiller Reload (Audit K3).
+let knownUpdatedAt = null
+let loadFailed = false
+
+async function pollForChanges() {
+  try {
+    const { content, updatedAt } = await loadNote()
+    if (!updatedAt || updatedAt === knownUpdatedAt) return
+    const currentJson = JSON.stringify(editor.getJSON())
+    if (currentJson === lastSavedContent) {
+      editor.commands.setContent(content, false)
+      knownUpdatedAt = updatedAt
+      lastSavedContent = currentJson
+    } else {
+      showStatus('Andere Person hat geändert — Reload zum Übernehmen.', 'error')
+    }
+  } catch (err) {
+    // Netz weg / Server tot -- still ignorieren, nächster Tick versucht erneut.
+  }
+}
+
+// Initialer Load mit Failure-Guard: bei Fehler wird Auto-Save deaktiviert,
+// damit der User nicht den Remote-Stand überschreibt (Audit H6).
 ;(async () => {
   try {
-    const content = await loadNote()
+    const { content, updatedAt } = await loadNote()
+    knownUpdatedAt = updatedAt
     if (content && Object.keys(content).length > 0) {
       editor.commands.setContent(content, false)
     }
+    lastSavedContent = JSON.stringify(editor.getJSON())
     editor.commands.focus('end')
+    setInterval(pollForChanges, 5000)
   } catch (err) {
     console.error('Laden fehlgeschlagen:', err)
-    showStatus('Laden fehlgeschlagen.', 'error')
+    loadFailed = true
+    showStatus('Laden fehlgeschlagen — Auto-Save deaktiviert.', 'error')
   }
 })()

@@ -4,10 +4,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDatabase } from '../lib/db.js'
 
+// Default identisch zu server.js, sonst läuft migrate ins Leere.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const dbPath = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
-  : path.join(__dirname, '..', 'database.db')
+  : path.join(__dirname, '..', 'data', 'notiz.db')
 
 try {
   const db = openDatabase(dbPath)

@@ -19,3 +19,11 @@ logs
 .env
 .env.local
 .env.*.local
+tests
+tests/**
+docs
+docs/**
+playwright.config.js
+Notiz-Benduhn.code-workspace
+test-results
+playwright-report

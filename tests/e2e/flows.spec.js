@@ -157,3 +157,23 @@ test.describe("Flow 5: Bild löschen + Notiz leeren", () => {
     await expect(page.locator("#save-status.saved")).toHaveText("Gespeichert.", { timeout: 5_000 });
   });
 });
+
+test.describe("Flow 6: Service-Worker + Theme-Persistenz", () => {
+  test("Service-Worker wird registriert (PWA-Features aktiv)", async ({ page }) => {
+    await waitForEditor(page);
+    // serviceWorker.register läuft nach DOMContentLoaded; ein Tick reicht.
+    await page.waitForFunction(() => 'serviceWorker' in navigator);
+    const registered = await page.evaluate(async () => {
+      const reg = await navigator.serviceWorker.getRegistration();
+      return !!reg;
+    });
+    expect(registered, "Service-Worker wurde nicht registriert").toBe(true);
+  });
+
+  test("Theme-Toggle persistiert in localStorage", async ({ page }) => {
+    await waitForEditor(page);
+    await page.locator("#btn-theme").click();
+    const stored = await page.evaluate(() => localStorage.getItem("copy-theme"));
+    expect(["light", "dark"]).toContain(stored);
+  });
+});

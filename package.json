@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "NODE_ENV=development nodemon server.js",
     "migrate": "node scripts/init-db.js",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:clean": "rm -rf data/test-notiz.db data/test-notiz.db-shm data/test-notiz.db-wal data/test-uploads playwright-report test-results"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

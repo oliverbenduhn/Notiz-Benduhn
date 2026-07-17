@@ -33,7 +33,7 @@ fürs Frontend. E2E-Tests grün (Desktop + iPhone-14-Emulation).
 git clone https://github.com/oliverbenduhn/Notiz-Benduhn.git
 cd Notiz-Benduhn
 npm install
-npm run migrate       # legt data/database.db + Tabellen an
+npm run migrate       # legt data/notiz.db + Tabellen an
 npm run dev           # nodemon auf http://localhost:3000
 ```
 
@@ -79,7 +79,7 @@ docker compose up -d
 | Variable       | Default                  | Bedeutung                              |
 | -------------- | ------------------------ | -------------------------------------- |
 | `PORT`         | `3000`                   | Express-Listen-Port                    |
-| `DB_PATH`      | `data/notiz.db`          | SQLite-Datei (Parent wird angelegt)    |
+| `DB_PATH`      | `data/notiz.db`          | SQLite-Datei (Parent wird angelegt); `npm run migrate` nutzt denselben Default |
 | `UPLOADS_DIR`  | `<DB_PATH>/uploads`      | Speicherort für Bilder                 |
 | `NODE_ENV`     | (leer)                   | `development` aktiviert `nodemon`      |
 

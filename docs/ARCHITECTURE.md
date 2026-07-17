@@ -116,10 +116,12 @@ Returns the current note content.
 **Response 200:**
 
 ```json
-{ "content": { "type": "doc", "content": [...] } }
+{ "content": { "type": "doc", "content": [...] }, "updatedAt": "2026-01-15 12:34:56" }
 ```
 
 The `content` field is the parsed JSON document, not the stored string.
+`updatedAt` is the SQLite `CURRENT_TIMESTAMP` of the last `PUT`, used by
+the client to detect concurrent edits.
 
 ### `PUT /api/note`
 
@@ -135,8 +137,9 @@ Replaces the note content.
 
 | Status | Meaning                                     |
 | ------ | ------------------------------------------- |
-| 200    | OK, body is `{ "ok": true }`                |
+| 200    | OK, body is `{ "ok": true, "updatedAt": "..." }` |
 | 400    | `content` missing or not an object          |
+| 422    | `content` is not a Tiptap-shaped object (`type: "doc"`) |
 
 Body limit: 1 MB JSON.
 
