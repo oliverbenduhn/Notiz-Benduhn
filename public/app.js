@@ -31,6 +31,28 @@ function updateLastSaved() {
   setTimeout(() => { lastSaved.textContent = '' }, 5000)
 }
 
+// Bestätigungsdialog (native <dialog>) -- ersetzt window.confirm
+function confirmDialog(message) {
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog')
+    dlg.className = 'confirm-dialog'
+    dlg.innerHTML = `
+      <form method="dialog">
+        <p>${message}</p>
+        <menu>
+          <button type="submit" value="cancel" data-action="cancel">Abbrechen</button>
+          <button type="submit" value="ok" data-action="ok" class="danger">OK</button>
+        </menu>
+      </form>`
+    dlg.addEventListener('close', () => {
+      resolve(dlg.returnValue === 'ok')
+      dlg.remove()
+    })
+    document.body.appendChild(dlg)
+    dlg.showModal()
+  })
+}
+
 // API
 async function loadNote() {
   const res = await fetch('/api/note')
@@ -69,6 +91,19 @@ async function deleteImageFile(src) {
   await fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
 }
 
+// Bild-Vollbild-Overlay (DOM-leicht)
+function openImageOverlay(src) {
+  const overlay = document.createElement('div')
+  overlay.className = 'image-overlay'
+  const big = document.createElement('img')
+  big.src = src
+  big.alt = ''
+  overlay.appendChild(big)
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', close)
+  document.body.appendChild(overlay)
+}
+
 async function insertImageFromFile(file) {
   try {
     const url = await uploadImage(file)
@@ -76,7 +111,6 @@ async function insertImageFromFile(file) {
       .focus()
       .insertContent({ type: 'image', attrs: { src: url, alt: '', title: null } })
       .run()
-    wrapImages()
     showStatus('Gespeichert.', 'saved')
   } catch (err) {
     console.error(err)
@@ -89,43 +123,42 @@ function clearChildren(el) {
   while (el.firstChild) el.removeChild(el.firstChild)
 }
 
-// Bild-Wrapper (Hover-Delete + Vollbild)
-function wrapImages() {
-  editorEl.querySelectorAll('img:not([data-wrapped])').forEach(img => {
-    img.setAttribute('data-wrapped', '1')
+// Tiptap-NodeView für Bilder -- ersetzt wrapImages().
+// ProseMirror kontrolliert jetzt den Wrapper, kein externer DOM-Mutation-Loop.
+function createImageNodeView(props, ed) {
+  const { node, getPos } = props
+  const wrapper = document.createElement('div')
+  wrapper.className = 'image-wrapper'
 
-    const wrapper = document.createElement('div')
-    wrapper.className = 'image-wrapper'
-    img.parentNode.insertBefore(wrapper, img)
-    wrapper.appendChild(img)
-
-    img.addEventListener('click', () => {
-      const overlay = document.createElement('div')
-      overlay.className = 'image-overlay'
-      const big = document.createElement('img')
-      big.src = img.src
-      big.alt = ''
-      overlay.appendChild(big)
-      overlay.addEventListener('click', () => overlay.remove())
-      document.body.appendChild(overlay)
-    })
-
-    const del = document.createElement('button')
-    del.className = 'image-delete-btn'
-    del.textContent = '\u00d7'
-    del.title = 'Bild loeschen'
-    del.addEventListener('click', async e => {
-      e.stopPropagation()
-      if (!window.confirm('Bild loeschen?')) return
-      await deleteImageFile(img.src).catch(() => {})
-      const pos = editor.view.posAtDOM(img, 0)
-      const node = editor.state.doc.nodeAt(pos)
-      if (node) {
-        editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
-      }
-    })
-    wrapper.appendChild(del)
+  const img = document.createElement('img')
+  img.src = node.attrs.src
+  img.alt = node.attrs.alt ?? ''
+  img.addEventListener('click', e => {
+    e.stopPropagation()
+    e.preventDefault()
+    openImageOverlay(img.src)
   })
+  wrapper.appendChild(img)
+
+  const del = document.createElement('button')
+  del.className = 'image-delete-btn'
+  del.type = 'button'
+  del.textContent = '\u00d7'
+  del.title = 'Bild loeschen'
+  del.setAttribute('aria-label', 'Bild loeschen')
+  del.addEventListener('click', async e => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!await confirmDialog('Bild loeschen?')) return
+    const pos = typeof getPos === 'function' ? getPos() : null
+    if (typeof pos === 'number') {
+      ed.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
+    }
+    deleteImageFile(img.src).catch(() => {})
+  })
+  wrapper.appendChild(del)
+
+  return { dom: wrapper }
 }
 
 // Auto-Save
@@ -144,21 +177,33 @@ function scheduleAutoSave() {
   }, 800)
 }
 
-// Slash-Menue
+// Slash-Menue (mit Aliasen + Guard gegen undefined)
 const SLASH_COMMANDS = [
-  { title: 'Ueberschrift 1', icon: 'H1',
+  { title: 'Ueberschrift 1', kw: ['h1','ueberschrift 1','ueberschrift','heading 1','heading1'],
+    icon: 'H1',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run() },
-  { title: 'Ueberschrift 2', icon: 'H2',
+  { title: 'Ueberschrift 2', kw: ['h2','ueberschrift 2','heading 2','heading2'],
+    icon: 'H2',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run() },
-  { title: 'Aufzaehlung',    icon: '=',
+  { title: 'Aufzaehlung', kw: ['ul','bullet','liste','list','aufzaehlung','aufzählung'],
+    icon: '=',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleBulletList().run() },
-  { title: 'Nummerierte Liste', icon: '1.',
+  { title: 'Nummerierte Liste', kw: ['ol','nummeriert','numbered','ordered'],
+    icon: '1.',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleOrderedList().run() },
-  { title: 'Code-Block',    icon: '<>',
+  { title: 'Code-Block', kw: ['code','pre','block','codeblock','code-block'],
+    icon: '<>',
     cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleCodeBlock().run() },
-  { title: 'Bild hochladen', icon: '[+]',
+  { title: 'Bild hochladen', kw: ['image','bild','foto','photo','img','pic'],
+    icon: '[+]',
     cmd: (ed, range) => { ed.chain().focus().deleteRange(range).run(); imageInput.click() } },
 ]
+
+function matchCommand(c, q) {
+  if (!q) return true
+  const ql = q.toLowerCase()
+  return c.title.toLowerCase().includes(ql) || c.kw.some(k => k.includes(ql))
+}
 
 function buildSlashItem(item, isFocused, props) {
   const el = document.createElement('div')
@@ -179,7 +224,7 @@ function buildSlashItem(item, isFocused, props) {
 
 function renderSlashMenu(popup, items, selectedIndex, props) {
   clearChildren(popup)
-  if (items.length === 0) { popup.style.display = 'none'; return }
+  if (!items || items.length === 0) { popup.style.display = 'none'; return }
   popup.style.display = ''
   items.forEach((item, i) => popup.appendChild(buildSlashItem(item, i === selectedIndex, props)))
 }
@@ -197,19 +242,27 @@ const SlashMenu = Extension.create({
       editor: this.editor,
       char: '/',
       startOfLine: false,
-      items: ({ query }) =>
-        SLASH_COMMANDS.filter(c => c.title.toLowerCase().includes(query.toLowerCase())),
+      items: ({ query }) => SLASH_COMMANDS.filter(c => matchCommand(c, query)),
       render: () => {
         let popup = null
         let selected = 0
+        let editorRef = null
+        let outsideHandler = null
         return {
           onStart(props) {
             selected = 0
+            editorRef = props.editor
             popup = document.createElement('div')
             popup.className = 'slash-menu'
             document.body.appendChild(popup)
             renderSlashMenu(popup, props.items, selected, props)
             positionSlashMenu(popup, props.clientRect?.())
+            outsideHandler = e => {
+              if (popup && !popup.contains(e.target) && !editorEl.contains(e.target)) {
+                editorRef.chain().focus().run()
+              }
+            }
+            document.addEventListener('mousedown', outsideHandler)
           },
           onUpdate(props) {
             selected = 0
@@ -217,20 +270,25 @@ const SlashMenu = Extension.create({
             positionSlashMenu(popup, props.clientRect?.())
           },
           onKeyDown(props) {
-            const len = props.items.length
-            if (!len) return false
+            // Tiptap's Suggestion-Plugin liefert in onKeyDown nur {editor, event, range}.
+            // query und items aus dem range ableiten.
+            const ed = props.editor ?? editor
+            const text = ed.state.doc.textBetween(props.range.from, props.range.to, '\n') ?? ''
+            const query = text.startsWith('/') ? text.slice(1) : text
+            const items = SLASH_COMMANDS.filter(c => matchCommand(c, query))
+            if (items.length === 0) return false
             if (props.event.key === 'ArrowDown') {
-              selected = (selected + 1) % len
+              selected = (selected + 1) % items.length
               renderSlashMenu(popup, props.items, selected, props)
               return true
             }
             if (props.event.key === 'ArrowUp') {
-              selected = (selected - 1 + len) % len
+              selected = (selected - 1 + items.length) % items.length
               renderSlashMenu(popup, props.items, selected, props)
               return true
             }
             if (props.event.key === 'Enter') {
-              props.items[selected]?.cmd(props.editor, props.range)
+              items[selected]?.cmd(editor, props.range)
               return true
             }
             if (props.event.key === 'Escape') {
@@ -239,7 +297,10 @@ const SlashMenu = Extension.create({
             }
             return false
           },
-          onExit() { popup?.remove(); popup = null }
+          onExit() {
+            if (outsideHandler) document.removeEventListener('mousedown', outsideHandler)
+            popup?.remove(); popup = null
+          }
         }
       },
       command: ({ editor: ed, range, props }) => props.cmd(ed, range)
@@ -252,7 +313,8 @@ const editor = new Editor({
   element: editorEl,
   extensions: [
     StarterKit,
-    ImageExtension.configure({ inline: false, allowBase64: false }),
+    ImageExtension.configure({ inline: false, allowBase64: false })
+      .extend({ addNodeView() { return (props) => createImageNodeView(props, editor) } }),
     Placeholder.configure({ placeholder: 'Text eingeben oder / fuer Befehle ...' }),
     SlashMenu,
   ],
@@ -276,8 +338,7 @@ const editor = new Editor({
       return true
     }
   },
-  onUpdate() { scheduleAutoSave(); wrapImages() },
-  onCreate() { wrapImages() }
+  onUpdate() { scheduleAutoSave() }
 })
 
 // Toolbar
@@ -335,8 +396,8 @@ document.addEventListener('dragleave', e => {
 document.addEventListener('drop', () => document.body.classList.remove('drag-over'))
 
 // Leeren
-btnClear.addEventListener('click', () => {
-  if (!window.confirm('Notiz leeren?')) return
+btnClear.addEventListener('click', async () => {
+  if (!await confirmDialog('Notiz leeren?')) return
   editor.commands.clearContent(true)
   scheduleAutoSave()
 })
@@ -347,7 +408,6 @@ btnClear.addEventListener('click', () => {
     const content = await loadNote()
     if (content && Object.keys(content).length > 0) {
       editor.commands.setContent(content, false)
-      wrapImages()
     }
     editor.commands.focus('end')
   } catch (err) {

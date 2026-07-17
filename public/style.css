@@ -253,6 +253,39 @@ body.drag-over #editor-wrapper {
   background: var(--accent-soft);
 }
 
+/* Bestätigungsdialog (ersetzt window.confirm) */
+.confirm-dialog {
+  border: none;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  max-width: 360px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.confirm-dialog::backdrop { background: rgba(0,0,0,0.4); }
+.confirm-dialog p { margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.4; }
+.confirm-dialog menu {
+  display: flex; gap: 0.5rem; justify-content: flex-end;
+  padding: 0; margin: 0; list-style: none;
+}
+.confirm-dialog menu button {
+  width: auto; height: 36px; padding: 0 1rem; font-size: 0.85rem;
+  border-radius: var(--r); color: var(--text);
+}
+.confirm-dialog menu button:hover { background: var(--surface-alt); }
+.confirm-dialog menu button.danger { color: var(--danger); }
+.confirm-dialog menu button.danger:hover { background: #fef2f2; }
+[data-theme="dark"] .confirm-dialog menu button.danger:hover { background: #1f0a0a; }
+
+/* Touch-Geräte: größere Touch-Targets + immer sichtbarer Bild-Lösch-Button */
+@media (hover: none) {
+  #toolbar { gap: 4px; padding: 0.4rem 0.75rem; }
+  #toolbar button { min-height: 44px; padding: 0 0.85rem; font-size: 0.85rem; }
+  .image-delete-btn { opacity: 1; }
+}
+
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--text-muted);
