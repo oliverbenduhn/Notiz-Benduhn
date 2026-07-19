@@ -1,4 +1,4 @@
-const CACHE_NAME = "notiz-benduhn-static-v9";
+const CACHE_NAME = "notiz-benduhn-static-v10";
 // Query-Strings werden bei der Precache-Liste bewusst weggelassen und beim
 // Match ignoriert: sonst passt der Cache-Key nie zur Laufzeit-Request-URL
 // (Audit H1).
@@ -33,10 +33,16 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
+  const url = new URL(request.url);
+
+  // API-Endpunkte (z.B. GET /api/note) niemals cachen. Sonst liefert der
+  // Service Worker veraltete Stände, was fälschlicherweise Konflikte auslöst.
+  if (url.pathname.startsWith("/api/")) {
+    return;
+  }
 
   // Share-Target: Bilder + Text von Android
   if (request.method === "POST") {
-    const url = new URL(request.url);
     if (url.pathname === "/share-target") {
       event.respondWith(handleShareTarget(request));
       return;
