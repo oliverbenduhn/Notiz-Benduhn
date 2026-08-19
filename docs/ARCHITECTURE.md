@@ -81,15 +81,15 @@ erDiagram
 
 ## 3. Database schema
 
-Two tables, both created idempotently on server start AND in
-`scripts/init-db.js`. The two schemas must stay in sync — see the
-"Schema changes" section in the runbook.
+`lib/db.js` is the single schema source. Both server startup and
+`scripts/init-db.js` call its `openDatabase()` helper.
 
 | Table         | Column      | Type      | Notes                                    |
 | ------------- | ----------- | --------- | ---------------------------------------- |
 | `note`        | `id`        | INTEGER PK | `CHECK (id = 1)` enforces singleton       |
 |               | `content`   | TEXT NOT NULL DEFAULT '{}' | JSON-stringified Tiptap document |
 |               | `updated_at`| TEXT DEFAULT CURRENT_TIMESTAMP | set on every `UPDATE`         |
+|               | `revision`  | INTEGER NOT NULL | monotonic conflict version |
 | `note_images` | `id`        | INTEGER PK AUTOINCREMENT    |                                  |
 |               | `filename`  | TEXT NOT NULL UNIQUE        | `<unix-ms>-<safe-original>`     |
 |               | `created_at`| TEXT DEFAULT CURRENT_TIMESTAMP |                              |
@@ -116,12 +116,12 @@ Returns the current note content.
 **Response 200:**
 
 ```json
-{ "content": { "type": "doc", "content": [...] }, "updatedAt": "2026-01-15 12:34:56" }
+{ "content": { "type": "doc", "content": [...] }, "updatedAt": "2026-01-15 12:34:56", "revision": 42 }
 ```
 
 The `content` field is the parsed JSON document, not the stored string.
-`updatedAt` is the SQLite `CURRENT_TIMESTAMP` of the last `PUT`, used by
-the client to detect concurrent edits.
+`updatedAt` is informational. `revision` is incremented for every successful
+write and is used by the client to detect concurrent edits reliably.
 
 ### `PUT /api/note`
 
@@ -137,7 +137,7 @@ Replaces the note content.
 
 | Status | Meaning                                     |
 | ------ | ------------------------------------------- |
-| 200    | OK, body is `{ "ok": true, "updatedAt": "..." }` |
+| 200    | OK, body is `{ "ok": true, "updatedAt": "...", "revision": 42 }` |
 | 400    | `content` missing or not an object          |
 | 422    | `content` is not a Tiptap-shaped object (`type: "doc"`) |
 
@@ -153,8 +153,14 @@ Multipart upload of a single image. Field name: `image`.
 | 400    | No file or non-image mimetype                        |
 | 413    | File exceeds 10 MB                                   |
 
-**Storage:** file written to `UPLOADS_DIR`, row inserted into
-`note_images`. Filename is `<unix-ms>-<safe-original>`.
+**Storage:** PNG, JPEG, GIF and WebP only. The server verifies MIME type and
+file signature before writing a `note_images` row. Filename is
+`<unix-ms>-<safe-original>`.
+
+### `DELETE /api/note`
+
+Clears the singleton note and removes every associated image row and upload.
+Returns the same `{ ok, updatedAt, revision }` write response.
 
 ### `DELETE /api/images/:filename`
 
@@ -261,7 +267,7 @@ graph LR
    release invalidates the old cache.
 2. **Share-target handler** for `POST /share-target`. The handler
    uploads any `image/*` files to `/api/images`, then `postMessage`s
-   `{type:"share-target", payload:{title,text,url,hasImages}}` to a
+   `{type:"share-target", payload:{title,text,url,imageUrls,imageErrors}}` to a
    matching window client. If none exists, it `openWindow("/")`.
 
 Note: there is **no Express route for `/share-target`**. The service
@@ -342,17 +348,14 @@ this. For deeper checks, also verify:
 
 ### Logs
 
-The server logs only the listen line on startup. There is no request log
-(morgan is in `dependencies` but not wired up). If you need access logs,
-add `app.use(morgan('tiny'))` near the top of `server.js`.
+The server logs only the listen line on startup. There is no request log.
+Add a logging dependency only if operational access logging is needed.
 
 ### Schema changes
 
-Both `server.js` (auto-init at startup) and `scripts/init-db.js`
-(CLI migration) carry the same `CREATE TABLE IF NOT EXISTS` statements.
-When changing the schema:
+`lib/db.js` owns `SCHEMA_STATEMENTS`; both callers use it. When changing the schema:
 
-1. Edit both files.
+1. Edit `lib/db.js`.
 2. Add a migration step (not just `CREATE TABLE IF NOT EXISTS`) — for
    column changes, use `ALTER TABLE`.
 3. Run `npm run migrate` locally and verify the server boots.

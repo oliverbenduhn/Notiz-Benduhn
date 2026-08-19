@@ -73,13 +73,46 @@ function confirmDialog(message) {
   })
 }
 
-// API -- liefert/akzeptiert jetzt updatedAt, damit der Client Remote-Änderungen
-// erkennen kann (Audit K3).
+let conflictOpen = false
+// A poll conflict must give users a recovery path; a red status alone is a dead end.
+function resolveConflict(content, revision) {
+  if (conflictOpen) return
+  conflictOpen = true
+  const dlg = document.createElement('dialog')
+  dlg.className = 'confirm-dialog'
+  const text = document.createElement('p')
+  text.textContent = 'Andere Person hat geändert. Lokale Änderungen behalten oder Remote-Version übernehmen?'
+  const menu = document.createElement('menu')
+  const local = document.createElement('button')
+  local.type = 'button'
+  local.textContent = 'Lokal behalten'
+  const remote = document.createElement('button')
+  remote.type = 'button'
+  remote.textContent = 'Remote übernehmen'
+  menu.append(local, remote)
+  dlg.append(text, menu)
+  const close = () => { conflictOpen = false; dlg.remove() }
+  local.addEventListener('click', () => { flushPending(); close() })
+  remote.addEventListener('click', () => {
+    editor.commands.setContent(content, false)
+    pendingContent = null
+    lastSavedContent = JSON.stringify(editor.getJSON())
+    knownRevision = revision
+    showStatus('Remote-Version übernommen.', 'saved')
+    close()
+  })
+  dlg.addEventListener('cancel', event => event.preventDefault())
+  document.body.appendChild(dlg)
+  dlg.showModal()
+  remote.focus()
+}
+
+// API: monotone revision erkennt auch mehrere Remote-Edits in derselben Sekunde.
 async function loadNote() {
   const res = await fetch('/api/note')
   if (!res.ok) throw new Error('Laden fehlgeschlagen')
-  const { content, updatedAt } = await res.json()
-  return { content, updatedAt }
+  const { content, updatedAt, revision } = await res.json()
+  return { content, updatedAt, revision }
 }
 
 async function saveNote(content) {
@@ -92,8 +125,13 @@ async function saveNote(content) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || 'Speichern fehlgeschlagen')
   }
-  const { updatedAt } = await res.json()
-  return updatedAt
+  return res.json()
+}
+
+async function clearNote() {
+  const res = await fetch('/api/note', { method: 'DELETE' })
+  if (!res.ok) throw new Error('Leeren fehlgeschlagen')
+  return res.json()
 }
 
 // Bild-Upload -- zählt laufende Uploads, damit Multi-Image-Drop einen
@@ -135,15 +173,25 @@ function openImageOverlay(src) {
   const big = document.createElement('img')
   big.src = src
   big.alt = ''
+  const closeButton = document.createElement('button')
+  closeButton.type = 'button'
+  closeButton.className = 'image-overlay-close'
+  closeButton.textContent = 'Schließen'
   overlay.appendChild(big)
+  overlay.appendChild(closeButton)
   const close = () => overlay.remove()
-  overlay.addEventListener('click', close)
-  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') close() })
+  closeButton.addEventListener('click', close)
+  overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+  overlay.addEventListener('keydown', e => {
+    if (e.key === 'Escape') close()
+    if (e.key === 'Tab') { e.preventDefault(); closeButton.focus() }
+  })
   document.body.appendChild(overlay)
-  overlay.focus()
+  closeButton.focus()
 }
 
 async function insertImageFromFile(file) {
+  if (loadFailed) return
   try {
     const url = await uploadImage(file)
     editor.chain()
@@ -172,10 +220,12 @@ function onImageClick(src, event) {
 // Bild löschen: erst Node aus dem Doc, dann Datei vom Server. Wenn der
 // Doc-Delete scheitert, lassen wir die Datei liegen -- sonst zeigt der Doc
 // ins Leere (Audit M13).
-async function onImageDelete({ src, editor, getPos, nodeSize }) {
+async function onImageDelete({ src, editor, getPos }) {
   if (!await confirmDialog('Bild loeschen?')) return
   const pos = typeof getPos === 'function' ? getPos() : null
   if (typeof pos !== 'number') return
+  const nodeSize = editor.state.doc.nodeAt(pos)?.nodeSize
+  if (!nodeSize) return
   const removed = editor.chain().focus().deleteRange({ from: pos, to: pos + nodeSize }).run()
   if (!removed) {
     showStatus('Löschen fehlgeschlagen.', 'error')
@@ -209,7 +259,6 @@ function createImageNodeView(props, ed) {
     src: img.src,
     editor: ed,
     getPos,
-    nodeSize: node.nodeSize,
   }))
   wrapper.appendChild(del)
 
@@ -225,8 +274,8 @@ let lastSavedContent = null  // JSON-String des zuletzt gespeicherten Stands
 async function flushPending() {
   if (!pendingContent) return
   try {
-    const updatedAt = await saveNote(pendingContent)
-    knownUpdatedAt = updatedAt
+    const { revision } = await saveNote(pendingContent)
+    knownRevision = revision
     lastSavedContent = JSON.stringify(pendingContent)
     pendingContent = null
     showStatus('Gespeichert.', 'saved')
@@ -242,6 +291,13 @@ function scheduleAutoSave() {
   clearTimeout(autoSaveTimer)
   showStatus('Speichern...', 'saving')
   autoSaveTimer = setTimeout(flushPending, 800)
+}
+
+function setEditingAvailable(available) {
+  editor.setEditable(available)
+  btnClear.disabled = !available
+  imageInput.disabled = !available
+  toolbar.querySelectorAll('button').forEach(button => { button.disabled = !available })
 }
 
 // Slash-Menue -- benutzt toggle* statt setNode, damit der zweite /h1
@@ -466,7 +522,8 @@ document.addEventListener('dragenter', e => {
   e.preventDefault()
   document.body.classList.add('drag-over')
 })
-document.addEventListener('dragleave', () => {
+document.addEventListener('dragleave', e => {
+  if (!e.relatedTarget) dragCounter = 1
   dragCounter--
   if (dragCounter <= 0) {
     dragCounter = 0
@@ -480,12 +537,25 @@ document.addEventListener('drop', () => {
   dragCounter = 0
   document.body.classList.remove('drag-over')
 })
+document.addEventListener('dragend', () => {
+  dragCounter = 0
+  document.body.classList.remove('drag-over')
+})
 
 // Leeren
 btnClear.addEventListener('click', async () => {
   if (!await confirmDialog('Notiz leeren?')) return
-  editor.commands.clearContent(true)
-  scheduleAutoSave()
+  try {
+    const { revision } = await clearNote()
+    editor.commands.clearContent(false)
+    pendingContent = null
+    lastSavedContent = JSON.stringify(editor.getJSON())
+    knownRevision = revision
+    showStatus('Gespeichert.', 'saved')
+    updateLastSaved()
+  } catch {
+    showStatus('Leeren fehlgeschlagen.', 'error')
+  }
 })
 
 // Service-Worker registrieren -- ohne ihn ist Cache, Offline und Share-Target
@@ -499,7 +569,7 @@ if ('serviceWorker' in navigator) {
   // (Audit K2).
   navigator.serviceWorker.addEventListener('message', e => {
     if (e.data?.type !== 'share-target') return
-    const { title, text, url, imageUrls } = e.data.payload || {}
+    const { title, text, url, imageUrls, imageErrors } = e.data.payload || {}
     const textParts = [title, text, url].filter(Boolean)
     if (textParts.length > 0) {
       editor.chain().focus().insertContent(textParts.join('\n\n')).run()
@@ -510,6 +580,7 @@ if ('serviceWorker' in navigator) {
         .insertContent({ type: 'image', attrs: { src: imgUrl, alt: '', title: null } })
         .run()
     }
+    if (imageErrors?.length) showStatus(`${imageErrors.length} Bild(er) konnten nicht hochgeladen werden.`, 'error')
   })
 }
 
@@ -532,20 +603,20 @@ window.addEventListener('pagehide', () => {
 
 // Polling: prüft alle 5s auf Remote-Änderungen. Bei Versatz mit ungespeicherten
 // lokalen Edits nur Hinweis, sonst stiller Reload (Audit K3).
-let knownUpdatedAt = null
+let knownRevision = null
 let loadFailed = false
 
 async function pollForChanges() {
   try {
-    const { content, updatedAt } = await loadNote()
-    if (!updatedAt || updatedAt === knownUpdatedAt) return
+    const { content, revision } = await loadNote()
+    if (revision === knownRevision) return
     const currentJson = JSON.stringify(editor.getJSON())
     if (currentJson === lastSavedContent) {
       editor.commands.setContent(content, false)
-      knownUpdatedAt = updatedAt
-      lastSavedContent = currentJson
+      knownRevision = revision
+      lastSavedContent = JSON.stringify(editor.getJSON())
     } else {
-      showStatus('Andere Person hat geändert — Reload zum Übernehmen.', 'error')
+      resolveConflict(content, revision)
     }
   } catch (err) {
     // Netz weg / Server tot -- still ignorieren, nächster Tick versucht erneut.
@@ -556,8 +627,8 @@ async function pollForChanges() {
 // damit der User nicht den Remote-Stand überschreibt (Audit H6).
 ;(async () => {
   try {
-    const { content, updatedAt } = await loadNote()
-    knownUpdatedAt = updatedAt
+    const { content, revision } = await loadNote()
+    knownRevision = revision
     if (content && Object.keys(content).length > 0) {
       editor.commands.setContent(content, false)
     }
@@ -567,6 +638,7 @@ async function pollForChanges() {
   } catch (err) {
     console.error('Laden fehlgeschlagen:', err)
     loadFailed = true
+    setEditingAvailable(false)
     showStatus('Laden fehlgeschlagen — Auto-Save deaktiviert.', 'error')
   }
 })()

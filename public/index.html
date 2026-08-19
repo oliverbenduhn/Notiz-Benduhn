@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>notiz v0.1.0</title>
+  <title>notiz v0.2.0</title>
   <meta name="theme-color" content="#d97706" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#f59e0b" media="(prefers-color-scheme: dark)">
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/icon.png" type="image/png">
   <link rel="stylesheet" href="/style.css">
   <script>
     // Theme vor dem Rendern setzen (verhindert Flash)
@@ -25,28 +26,28 @@
     <div class="header-actions">
       <span id="save-status" class="save-status" aria-live="polite"></span>
       <button id="btn-clear" type="button" title="Notiz leeren">Leeren</button>
-      <button id="btn-theme" type="button" aria-label="Erscheinungsbild wechseln" title="Erscheinungsbild wechseln">
-        <svg id="i-sun" class="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button id="btn-theme" type="button" aria-label="Erscheinungsbild wechseln" aria-pressed="false" title="Erscheinungsbild wechseln">
+        <svg id="i-sun" class="theme-icon" aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="4"/>
           <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
         </svg>
-        <svg id="i-moon" class="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg id="i-moon" class="theme-icon" aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
         </svg>
       </button>
     </div>
   </header>
   <div id="toolbar" role="toolbar" aria-label="Formatierung">
-    <button data-action="h1" title="Ueberschrift 1" aria-label="Überschrift 1">H1</button>
-    <button data-action="h2" title="Ueberschrift 2" aria-label="Überschrift 2">H2</button>
+    <button data-action="h1" title="Ueberschrift 1" aria-label="Überschrift 1" aria-pressed="false">H1</button>
+    <button data-action="h2" title="Ueberschrift 2" aria-label="Überschrift 2" aria-pressed="false">H2</button>
     <div class="sep" role="separator"></div>
-    <button data-action="bold" title="Fett" aria-label="Fett"><b>B</b></button>
-    <button data-action="italic" title="Kursiv" aria-label="Kursiv"><i>I</i></button>
+    <button data-action="bold" title="Fett" aria-label="Fett" aria-pressed="false"><b>B</b></button>
+    <button data-action="italic" title="Kursiv" aria-label="Kursiv" aria-pressed="false"><i>I</i></button>
     <div class="sep" role="separator"></div>
-    <button data-action="bullet" title="Aufzaehlung" aria-label="Aufzählung">&#x2261; Liste</button>
-    <button data-action="ordered" title="Nummerierte Liste" aria-label="Nummerierte Liste">&#x2460; Numm.</button>
+    <button data-action="bullet" title="Aufzaehlung" aria-label="Aufzählung" aria-pressed="false">&#x2261; Liste</button>
+    <button data-action="ordered" title="Nummerierte Liste" aria-label="Nummerierte Liste" aria-pressed="false">&#x2460; Numm.</button>
     <div class="sep" role="separator"></div>
-    <button data-action="code" title="Code-Block" aria-label="Code-Block">&lt;/&gt; Code</button>
+    <button data-action="code" title="Code-Block" aria-label="Code-Block" aria-pressed="false">&lt;/&gt; Code</button>
     <button data-action="image" title="Bild hochladen" aria-label="Bild hochladen">&#x1F4CE; Bild</button>
   </div>
   <div id="editor-wrapper">
@@ -54,7 +55,7 @@
   </div>
   <footer class="app-footer">
     <span>/ fuer Befehle &middot; Bild per Drag &amp; Drop oder Einf&uuml;gen</span>
-    <span><span id="app-version" title="Version">v0.1.0</span> &middot; <span id="last-saved"></span></span>
+    <span><span id="app-version" title="Version">v0.2.0</span> &middot; <span id="last-saved"></span></span>
   </footer>
   <nav class="legal-footer" aria-label="Rechtliches">
     <a href="https://legal.benduhn.de/impressum/" target="_blank" rel="noopener">Impressum</a> &middot;
@@ -65,6 +66,7 @@
   <script>
     // Theme-Toggle Logik -- Icons werden rein über CSS via [data-theme] gesteuert.
     var btnTheme = document.getElementById('btn-theme');
+    btnTheme.setAttribute('aria-pressed', String(document.documentElement.hasAttribute('data-theme')));
     btnTheme.addEventListener('click', function() {
       var isDark = document.documentElement.hasAttribute('data-theme');
       if (isDark) {
@@ -74,6 +76,7 @@
         document.documentElement.setAttribute('data-theme', 'dark');
         localStorage.setItem('copy-theme', 'dark');
       }
+      btnTheme.setAttribute('aria-pressed', String(!isDark));
     });
   </script>
 </body>

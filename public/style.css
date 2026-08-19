@@ -112,6 +112,8 @@ button {
 }
 button:hover  { background: var(--surface-alt); color: var(--text); }
 button.active { background: var(--accent-soft); color: var(--accent); }
+button:disabled { cursor: not-allowed; opacity: 0.45; }
+button:disabled:hover { background: none; color: var(--text-muted); }
 #btn-clear { width: auto; padding: 0 0.5rem; font-size: 0.75rem; }
 #btn-clear:hover { color: var(--danger); background: #fef2f2; }
 [data-theme="dark"] #btn-clear:hover { background: #1f0a0a; }
@@ -252,6 +254,12 @@ button.active { background: var(--accent-soft); color: var(--accent); }
   max-width: 95vw; max-height: 95vh;
   object-fit: contain; border-radius: 4px; margin: 0;
 }
+.image-overlay-close {
+  position: fixed; top: 1rem; right: 1rem;
+  width: auto; height: 36px; padding: 0 0.75rem;
+  color: #fff; background: rgba(0,0,0,0.55);
+}
+.image-overlay-close:hover { background: rgba(0,0,0,0.8); color: #fff; }
 
 body.drag-over #editor-wrapper {
   outline: 2px dashed var(--accent);

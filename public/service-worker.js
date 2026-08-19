@@ -1,4 +1,4 @@
-const CACHE_NAME = "notiz-benduhn-static-v10";
+const CACHE_NAME = "notiz-benduhn-static-v11";
 // Query-Strings werden bei der Precache-Liste bewusst weggelassen und beim
 // Match ignoriert: sonst passt der Cache-Key nie zur Laufzeit-Request-URL
 // (Audit H1).
@@ -112,6 +112,7 @@ async function handleShareTarget(request) {
       (v) => v instanceof File && v.size > 0
     );
     const imageUrls = [];
+    const imageErrors = [];
     for (const file of imageFiles) {
       const uploadForm = new FormData();
       uploadForm.append("image", file, file.name);
@@ -121,6 +122,7 @@ async function handleShareTarget(request) {
         if (body && body.url) imageUrls.push(body.url);
       } else {
         console.error("Share upload failed:", uploadRes.status);
+        imageErrors.push(file.name);
       }
     }
 
@@ -128,7 +130,8 @@ async function handleShareTarget(request) {
       title: extractText("title"),
       text: extractText("text"),
       url: extractText("url"),
-      imageUrls
+      imageUrls,
+      imageErrors
     };
     const windowClients = await self.clients.matchAll({
       type: "window",

@@ -23,6 +23,19 @@ test.beforeEach(async ({ request }) => {
   await resetNote(request);
 });
 
+test.describe("API-Grenzen", () => {
+  test("Revision steigt pro PUT und akzeptiert nur echte Rasterbilder", async ({ request }) => {
+    const first = await request.put("/api/note", { data: { content: { type: "doc", content: [] } } });
+    const second = await request.put("/api/note", { data: { content: { type: "doc", content: [] } } });
+    expect((await second.json()).revision).toBeGreaterThan((await first.json()).revision);
+
+    const fakeUpload = await request.post("/api/images", {
+      multipart: { image: { name: "fake.png", mimeType: "image/png", buffer: Buffer.from("not an image") } },
+    });
+    expect(fakeUpload.status()).toBe(400);
+  });
+});
+
 // Tiptap-Toolbar wirft DOM-Änderungen erst nach kurzer Verzögerung.
 async function waitForEditor(page) {
   await page.goto("/");
@@ -155,6 +168,21 @@ test.describe("Flow 5: Bild löschen + Notiz leeren", () => {
     await page.locator('.confirm-dialog button[data-action="ok"]').click();
     await expect(page.locator("#editor .ProseMirror")).toHaveText("", { timeout: 5_000 });
     await expect(page.locator("#save-status.saved")).toHaveText("Gespeichert.", { timeout: 5_000 });
+  });
+});
+
+test.describe("Flow 5b: Notiz leeren bereinigt Bilder", () => {
+  test("Clear entfernt auch den hochgeladenen Bild-Asset", async ({ page, request }) => {
+    await waitForEditor(page);
+    await page.locator('button[data-action="image"]').click();
+    await page.locator("#image-input").setInputFiles(FIXTURE_IMAGE);
+    const src = await page.locator("#editor img").getAttribute("src");
+    expect(src).toBeTruthy();
+
+    await page.locator("#btn-clear").click();
+    await page.locator('.confirm-dialog button[data-action="ok"]').click();
+    await expect(page.locator("#editor img")).toHaveCount(0);
+    expect((await request.get(src)).status()).toBe(404);
   });
 });
 

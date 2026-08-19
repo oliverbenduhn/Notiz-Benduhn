@@ -113,6 +113,7 @@ AGENTS.md                  KI-Regelwerk (Konventionen, Boundaries, Anti-Patterns
 | ------- | --------------------------- | -------------------------------------- |
 | `GET`   | `/api/note`                 | Aktuelle Notiz lesen                   |
 | `PUT`   | `/api/note`                 | Notiz speichern (JSON-Body, ≤ 1 MB)    |
+| `DELETE`| `/api/note`                 | Notiz leeren und alle Bilder bereinigen |
 | `POST`  | `/api/images`               | Bild-Upload (multipart, ≤ 10 MB)       |
 | `DELETE`| `/api/images/:filename`     | Bild löschen (DB-Eintrag + Datei)      |
 
