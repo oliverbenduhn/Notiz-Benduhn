@@ -51,7 +51,8 @@ jobs:
             sudo git pull origin main
             sudo docker compose build --no-cache
             sudo docker compose up -d
-            container=$(sudo docker compose ps -q notiz-benduhn)
+            container=$(sudo docker compose ps -q --all notiz-benduhn)
+            [ -n "$container" ]
             for _ in $(seq 1 12); do
               status=$(sudo docker inspect --format '{{.State.Health.Status}}' "$container")
               [ "$status" = healthy ] && break
