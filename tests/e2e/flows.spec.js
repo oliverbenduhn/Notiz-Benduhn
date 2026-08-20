@@ -169,10 +169,40 @@ test.describe("Flow 3: Slash-Befehlsmenü", () => {
     // Caret sitzt jetzt in einer H1-Zeile (ggf. leer -- auf Existenz prüfen).
     await expect(page.locator("#editor h1")).toHaveCount(1);
   });
+
+  test("Pfeiltasten wählen einen Befehl aus", async ({ page }) => {
+    await waitForEditor(page);
+
+    await page.locator("#editor .ProseMirror").click();
+    await page.keyboard.type("/");
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(".slash-item.focused")).toContainText("Ueberschrift 2");
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#editor h2")).toHaveCount(1);
+  });
 });
 
 test.describe("Flow 4: Bild hochladen + Vollbild-Overlay", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("Bild-Drop auf den Editor verhindert Browser-Navigation und lädt hoch", async ({ page }) => {
+    await waitForEditor(page);
+    const dataTransfer = await page.evaluateHandle(base64 => {
+      const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], "pixel.png", { type: "image/png" }));
+      return transfer;
+    }, fs.readFileSync(FIXTURE_IMAGE).toString("base64"));
+    const wasPrevented = await page.locator("#editor-wrapper").evaluate((target, transfer) => {
+      const event = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, dataTransfer);
+
+    expect(wasPrevented).toBe(true);
+    await expect(page.locator("#editor img")).toBeVisible({ timeout: 10_000 });
+  });
 
   test("Bild per Toolbar erscheint im Editor und öffnet Overlay beim Klick", async ({ page }) => {
     await waitForEditor(page);

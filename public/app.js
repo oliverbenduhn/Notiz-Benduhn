@@ -335,12 +335,12 @@ const SlashMenu = Extension.create({
             if (items.length === 0) return false
             if (props.event.key === 'ArrowDown') {
               selected = (selected + 1) % items.length
-              renderSlashMenu(popup, props.items, selected, props)
+              renderSlashMenu(popup, items, selected, props)
               return true
             }
             if (props.event.key === 'ArrowUp') {
               selected = (selected - 1 + items.length) % items.length
-              renderSlashMenu(popup, props.items, selected, props)
+              renderSlashMenu(popup, items, selected, props)
               return true
             }
             if (props.event.key === 'Enter') {
@@ -455,7 +455,13 @@ document.addEventListener('dragleave', e => {
 document.addEventListener('dragover', e => {
   if (dragCounter > 0) e.preventDefault()
 })
-document.addEventListener('drop', () => {
+document.addEventListener('drop', e => {
+  const files = Array.from(e.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'))
+  const unhandled = !e.defaultPrevented
+  if (files.length > 0) {
+    e.preventDefault()
+    if (unhandled) files.forEach(f => insertImageFromFile(f))
+  }
   dragCounter = 0
   document.body.classList.remove('drag-over')
 })
