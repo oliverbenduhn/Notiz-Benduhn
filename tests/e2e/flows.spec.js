@@ -49,7 +49,11 @@ test.describe("API-Grenzen", () => {
 
 // Tiptap-Toolbar wirft DOM-Änderungen erst nach kurzer Verzögerung.
 async function waitForEditor(page) {
+  const initialNote = page.waitForResponse(response =>
+    response.request().method() === "GET" && response.url().includes("/api/note")
+  );
   await page.goto("/");
+  await initialNote;
   await page.locator("#editor .ProseMirror").waitFor({ state: "visible" });
   await page.locator(".tiptap").waitFor({ state: "visible" });
 }
@@ -143,9 +147,7 @@ test.describe("Flow 2: Formatierung via Toolbar", () => {
     await page.keyboard.press("End");
     await page.keyboard.press("Enter");
     await page.keyboard.type("wichtig");
-    await page.keyboard.down("Shift");
-    for (let i = 0; i < "wichtig".length; i++) await page.keyboard.press("ArrowLeft");
-    await page.keyboard.up("Shift");
+    await page.locator("#editor p").last().click({ clickCount: 3 });
     await page.locator('button[data-action="bold"]').click();
     await expect(page.locator("#editor strong")).toContainText("wichtig");
   });
