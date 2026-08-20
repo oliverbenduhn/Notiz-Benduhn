@@ -55,8 +55,8 @@ jobs:
             [ -n "$container" ]
             for _ in $(seq 1 12); do
               status=$(sudo docker inspect --format '{{.State.Health.Status}}' "$container")
-              [ "$status" = healthy ] && break
-              [ "$status" = unhealthy ] && exit 1
+              if [ "$status" = healthy ]; then break; fi
+              if [ "$status" = unhealthy ]; then exit 1; fi
               sleep 5
             done
             [ "$status" = healthy ]
