@@ -2,11 +2,13 @@ import express from 'express'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import compression from 'compression'
 import multer from 'multer'
 import { mkdirSync, unlinkSync, openSync, readSync, closeSync } from 'node:fs'
 import {
   openDatabase,
   getNote,
+  getRevision,
   updateNote,
   recordImage,
   findImage,
@@ -85,22 +87,35 @@ function hasOnlyUploadImageSources(node) {
 }
 
 const app = express()
+app.use(compression({ threshold: 1024 }))
 app.use(express.json({ limit: '1mb' }))
 app.use(express.static(path.join(__dirname, 'public')))
 app.use('/uploads', express.static(UPLOADS_DIR))
 
-app.get('/api/note', (_req, res) => {
+app.get('/api/note', (req, res) => {
+  const since = Number(req.query.since)
+  if (Number.isSafeInteger(since) && since >= 0 && getRevision(db) === since) {
+    return res.status(204).end()
+  }
   const { content, updatedAt, revision } = getNote(db)
   res.json({ content, updatedAt, revision })
 })
 
 app.put('/api/note', (req, res) => {
-  const { content } = req.body
-  if (!isTiptapDoc(content) || !hasOnlyUploadImageSources(content)) {
+  const { content, revision } = req.body
+  const hasRevision = revision !== undefined
+  if (!isTiptapDoc(content) || !hasOnlyUploadImageSources(content) || (hasRevision && (!Number.isSafeInteger(revision) || revision < 0))) {
     return res.status(422).json({ error: 'Ungültiger Inhalt.' })
   }
-  const { updated_at: updatedAt, revision } = updateNote(db, content)
-  res.json({ ok: true, updatedAt, revision })
+  // ponytail: legacy clients may write during the service-worker rollout;
+  // remove this fallback once a forced client reload exists.
+  const updated = updateNote(db, content, revision)
+  if (!updated) {
+    const note = getNote(db)
+    return res.status(409).json({ error: 'Notiz wurde inzwischen geändert.', content: note.content, revision: note.revision })
+  }
+  const { updated_at: updatedAt, revision: newRevision } = updated
+  res.json({ ok: true, updatedAt, revision: newRevision })
 })
 
 app.post('/api/images', (req, res) => {
@@ -129,18 +144,32 @@ app.post('/api/images', (req, res) => {
   })
 })
 
-app.delete('/api/note', (_req, res) => {
-  const images = listImages(db)
+app.delete('/api/note', (req, res) => {
+  const { revision } = req.body ?? {}
+  const hasRevision = revision !== undefined
+  if (hasRevision && (!Number.isSafeInteger(revision) || revision < 0)) {
+    return res.status(422).json({ error: 'Ungültige Revision.' })
+  }
+  // ponytail: legacy clients may clear during the service-worker rollout;
+  // remove this fallback once a forced client reload exists.
   const emptyDoc = { type: 'doc', content: [] }
-  const clearNote = db.transaction(() => {
+  const clearNote = db.transaction(expectedRevision => {
+    const updated = updateNote(db, emptyDoc, expectedRevision)
+    if (!updated) return null
+    const images = listImages(db)
     removeAllImages(db)
-    return updateNote(db, emptyDoc)
+    return { images, updated }
   })
-  const { updated_at: updatedAt, revision } = clearNote()
+  const result = clearNote(revision)
+  if (!result) {
+    const note = getNote(db)
+    return res.status(409).json({ error: 'Notiz wurde inzwischen geändert.', content: note.content, revision: note.revision })
+  }
+  const { images, updated: { updated_at: updatedAt, revision: newRevision } } = result
   for (const { filename } of images) {
     try { unlinkSync(path.join(UPLOADS_DIR, filename)) } catch {}
   }
-  res.json({ ok: true, updatedAt, revision })
+  res.json({ ok: true, updatedAt, revision: newRevision })
 })
 
 app.delete('/api/images/:filename', (req, res) => {

@@ -3,7 +3,7 @@
 Eine geteilte Notiz als PWA. Eine einzige Notiz, ein Editor (Tiptap), ein
 Backend (Express + SQLite + Multer), ein einziger Browser-Tab reicht.
 
-**Status:** v0.1.0 — Kernpfad stabil, ~370 Zeilen Backend, kein Build-Step
+**Status:** v0.3.0 — Kernpfad stabil, kein Build-Step
 fürs Frontend. E2E-Tests grün (Desktop + iPhone-14-Emulation).
 
 ## Tech-Stack

@@ -16,7 +16,8 @@ const FIXTURE_IMAGE = path.join(__dirname, "fixtures", "pixel.png");
 
 // Setzt die geteilte Notiz auf leer zurück, damit Tests sich nicht überlagern.
 async function resetNote(request) {
-  await request.put("/api/note", { data: { content: { type: "doc", content: [] } } });
+  const { revision } = await (await request.get("/api/note")).json();
+  await request.put("/api/note", { data: { content: { type: "doc", content: [] }, revision } });
 }
 
 test.beforeEach(async ({ request }) => {
@@ -24,10 +25,20 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.describe("API-Grenzen", () => {
-  test("Revision steigt pro PUT und akzeptiert nur echte Rasterbilder", async ({ request }) => {
-    const first = await request.put("/api/note", { data: { content: { type: "doc", content: [] } } });
-    const second = await request.put("/api/note", { data: { content: { type: "doc", content: [] } } });
-    expect((await second.json()).revision).toBeGreaterThan((await first.json()).revision);
+  test("Revision spart beim unveränderten Poll den Dokument-Transfer und akzeptiert nur echte Rasterbilder", async ({ request }) => {
+    const { revision } = await (await request.get("/api/note")).json();
+    const first = await request.put("/api/note", { data: { content: { type: "doc", content: [] }, revision } });
+    const firstRevision = (await first.json()).revision;
+    const unchanged = await request.get(`/api/note?since=${firstRevision}`);
+    expect(unchanged.status()).toBe(204);
+    const second = await request.put("/api/note", { data: { content: { type: "doc", content: [] }, revision: firstRevision } });
+    expect((await second.json()).revision).toBeGreaterThan(firstRevision);
+    const stale = await request.put("/api/note", { data: { content: { type: "doc", content: [] }, revision: firstRevision } });
+    expect(stale.status()).toBe(409);
+    const staleClear = await request.delete("/api/note", { data: { revision: firstRevision } });
+    expect(staleClear.status()).toBe(409);
+    expect((await request.delete("/api/note")).ok()).toBe(true);
+    expect(["br", "gzip"]).toContain((await request.get("/app.js")).headers()["content-encoding"]);
 
     const fakeUpload = await request.post("/api/images", {
       multipart: { image: { name: "fake.png", mimeType: "image/png", buffer: Buffer.from("not an image") } },
@@ -56,6 +67,64 @@ test.describe("Flow 1: Schreiben + Auto-Save + Persistenz", () => {
     await page.locator("#editor .ProseMirror").waitFor({ state: "visible" });
 
     await expect(page.locator("#editor .ProseMirror")).toContainText("Einkaufsliste");
+  });
+
+  test("ein langsamer Save wird vor dem neueren Stand abgeschlossen", async ({ page, request }) => {
+    test.slow();
+    await waitForEditor(page);
+    let delayed = false;
+    await page.route("**/api/note", async route => {
+      if (route.request().method() !== "PUT" || delayed) return route.continue();
+      delayed = true;
+      const response = await route.fetch();
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+      await route.fulfill({ response });
+    });
+
+    const firstSave = page.waitForRequest(request => request.method() === "PUT" && request.url().includes("/api/note"));
+    await page.locator("#editor .ProseMirror").click();
+    await page.keyboard.type("A");
+    await firstSave;
+    await page.keyboard.type("B");
+
+    await expect(page.locator("#save-status.saved")).toHaveText("Gespeichert.", { timeout: 5_000 });
+    await expect.poll(async () => JSON.stringify(await (await request.get("/api/note")).json())).toContain("AB");
+  });
+});
+
+test.describe("Flow 1b: Notizsynchronisation", () => {
+  test("Konfliktentscheidung übernimmt remote oder speichert lokalen Stand", async ({ page, browser, request }) => {
+    test.slow();
+    const peer = await browser.newPage();
+    await waitForEditor(page);
+    await waitForEditor(peer);
+
+    async function createConflict(localText, remoteText) {
+      await peer.route("**/api/note", route =>
+        route.request().method() === "PUT" ? route.abort() : route.continue()
+      );
+      await peer.locator("#editor .ProseMirror").click();
+      await peer.keyboard.type(localText);
+      await expect(peer.locator("#save-status.error")).toHaveText("Speichern fehlgeschlagen.");
+      const { revision } = await (await request.get("/api/note")).json();
+      await request.put("/api/note", {
+        data: { content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: remoteText }] }] }, revision },
+      });
+      await expect(peer.locator(".confirm-dialog")).toBeVisible({ timeout: 7_000 });
+      await peer.unroute("**/api/note");
+    }
+
+    await createConflict("lokal verwerfen", "remote übernehmen");
+    await peer.getByRole("button", { name: "Remote übernehmen" }).click();
+    await expect(peer.locator("#editor .ProseMirror")).toContainText("remote übernehmen");
+
+    await peer.reload();
+    await peer.locator("#editor .ProseMirror").waitFor({ state: "visible" });
+    await createConflict("lokal behalten", "remote verwerfen");
+    await peer.getByRole("button", { name: "Lokal behalten" }).click();
+    await expect(peer.locator("#save-status.saved")).toHaveText("Gespeichert.");
+    await expect.poll(async () => JSON.stringify(await (await request.get("/api/note")).json())).toContain("lokal behalten");
+    await peer.close();
   });
 });
 

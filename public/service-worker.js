@@ -1,4 +1,4 @@
-const CACHE_NAME = "notiz-benduhn-static-v11";
+const CACHE_NAME = "notiz-benduhn-static-v15";
 // Query-Strings werden bei der Precache-Liste bewusst weggelassen und beim
 // Match ignoriert: sonst passt der Cache-Key nie zur Laufzeit-Request-URL
 // (Audit H1).
@@ -7,6 +7,8 @@ const APP_SHELL = [
   "/index.html",
   "/style.css",
   "/app.js",
+  "/editor-commands.js",
+  "/note-sync.js",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",
@@ -111,20 +113,27 @@ async function handleShareTarget(request) {
     const imageFiles = formData.getAll("image").filter(
       (v) => v instanceof File && v.size > 0
     );
-    const imageUrls = [];
-    const imageErrors = [];
-    for (const file of imageFiles) {
-      const uploadForm = new FormData();
-      uploadForm.append("image", file, file.name);
-      const uploadRes = await fetch("/api/images", { method: "POST", body: uploadForm });
-      if (uploadRes.ok) {
-        const body = await uploadRes.json().catch(() => null);
-        if (body && body.url) imageUrls.push(body.url);
-      } else {
-        console.error("Share upload failed:", uploadRes.status);
-        imageErrors.push(file.name);
-      }
+    // Three parallel uploads reduce latency without buffering every possible 10 MB file at once.
+    const results = [];
+    for (let index = 0; index < imageFiles.length; index += 3) {
+      results.push(...await Promise.all(imageFiles.slice(index, index + 3).map(async (file) => {
+        try {
+          const uploadForm = new FormData();
+          uploadForm.append("image", file, file.name);
+          const uploadRes = await fetch("/api/images", { method: "POST", body: uploadForm });
+          if (uploadRes.ok) {
+            const body = await uploadRes.json().catch(() => null);
+            return body?.url ? { url: body.url } : { error: file.name };
+          }
+          console.error("Share upload failed:", uploadRes.status);
+        } catch (error) {
+          console.error("Share upload failed:", error);
+        }
+        return { error: file.name };
+      })));
     }
+    const imageUrls = results.flatMap((result) => result.url ? [result.url] : []);
+    const imageErrors = results.flatMap((result) => result.error ? [result.error] : []);
 
     const sharePayload = {
       title: extractText("title"),

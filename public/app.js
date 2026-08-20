@@ -1,8 +1,10 @@
-import { Editor, Extension } from 'https://esm.sh/@tiptap/core@2'
-import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2'
-import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2'
-import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2'
-import Suggestion from 'https://esm.sh/@tiptap/suggestion@2'
+import { Editor, Extension } from 'https://esm.sh/@tiptap/core@2.27.2'
+import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.27.2'
+import ImageExtension from 'https://esm.sh/@tiptap/extension-image@2.27.2'
+import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2.27.2'
+import Suggestion from 'https://esm.sh/@tiptap/suggestion@2.27.2'
+import { createNoteSynchronization } from './note-sync.js'
+import { EDITOR_COMMANDS, isEditorCommandActive, runEditorCommand } from './editor-commands.js'
 
 // Editor-Hülle: Tiptap-Instanz, eine geteilte Notiz, REST-Sync (PUT/GET /api/note).
 // Bilder als NodeView (siehe createImageNodeView), Slash-Menu via Suggestion-Plugin.
@@ -15,6 +17,7 @@ const lastSaved  = document.querySelector('#last-saved')
 const btnClear   = document.querySelector('#btn-clear')
 const imageInput = document.querySelector('#image-input')
 const toolbar    = document.querySelector('#toolbar')
+let noteSync
 
 // Status-Anzeige -- 5s Auto-Clear reicht screenreadern, sich anzuhören
 // (Audit N6). "saved"-Variante bleibt sichtbar, bis sie überschrieben wird.
@@ -92,13 +95,9 @@ function resolveConflict(content, revision) {
   menu.append(local, remote)
   dlg.append(text, menu)
   const close = () => { conflictOpen = false; dlg.remove() }
-  local.addEventListener('click', () => { flushPending(); close() })
+  local.addEventListener('click', () => { noteSync.keepLocal(revision); close() })
   remote.addEventListener('click', () => {
-    editor.commands.setContent(content, false)
-    pendingContent = null
-    lastSavedContent = JSON.stringify(editor.getJSON())
-    knownRevision = revision
-    showStatus('Remote-Version übernommen.', 'saved')
+    noteSync.acceptRemote(content, revision)
     close()
   })
   dlg.addEventListener('cancel', event => event.preventDefault())
@@ -107,29 +106,12 @@ function resolveConflict(content, revision) {
   remote.focus()
 }
 
-// API: monotone revision erkennt auch mehrere Remote-Edits in derselben Sekunde.
-async function loadNote() {
-  const res = await fetch('/api/note')
-  if (!res.ok) throw new Error('Laden fehlgeschlagen')
-  const { content, updatedAt, revision } = await res.json()
-  return { content, updatedAt, revision }
-}
-
-async function saveNote(content) {
-  const res = await fetch('/api/note', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content })
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || 'Speichern fehlgeschlagen')
-  }
-  return res.json()
-}
-
 async function clearNote() {
-  const res = await fetch('/api/note', { method: 'DELETE' })
+  const res = await fetch('/api/note', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision: noteSync.getRevision() })
+  })
   if (!res.ok) throw new Error('Leeren fehlgeschlagen')
   return res.json()
 }
@@ -191,7 +173,7 @@ function openImageOverlay(src) {
 }
 
 async function insertImageFromFile(file) {
-  if (loadFailed) return
+  if (!noteSync.isAvailable()) return
   try {
     const url = await uploadImage(file)
     editor.chain()
@@ -265,34 +247,6 @@ function createImageNodeView(props, ed) {
   return { dom: wrapper }
 }
 
-// Auto-Save -- tracked pendingContent, damit pagehide den letzten Stand
-// noch wegschicken kann (Audit H7).
-let autoSaveTimer = null
-let pendingContent = null
-let lastSavedContent = null  // JSON-String des zuletzt gespeicherten Stands
-
-async function flushPending() {
-  if (!pendingContent) return
-  try {
-    const { revision } = await saveNote(pendingContent)
-    knownRevision = revision
-    lastSavedContent = JSON.stringify(pendingContent)
-    pendingContent = null
-    showStatus('Gespeichert.', 'saved')
-    updateLastSaved()
-  } catch {
-    showStatus('Speichern fehlgeschlagen.', 'error')
-  }
-}
-
-function scheduleAutoSave() {
-  if (loadFailed) return
-  pendingContent = editor.getJSON()
-  clearTimeout(autoSaveTimer)
-  showStatus('Speichern...', 'saving')
-  autoSaveTimer = setTimeout(flushPending, 800)
-}
-
 function setEditingAvailable(available) {
   editor.setEditable(available)
   btnClear.disabled = !available
@@ -300,34 +254,11 @@ function setEditingAvailable(available) {
   toolbar.querySelectorAll('button').forEach(button => { button.disabled = !available })
 }
 
-// Slash-Menue -- benutzt toggle* statt setNode, damit der zweite /h1
-// den H1 wieder entfernt (Audit M11).
-const SLASH_COMMANDS = [
-  { title: 'Ueberschrift 1', kw: ['h1','ueberschrift 1','ueberschrift','heading 1','heading1'],
-    icon: 'H1',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleHeading({ level: 1 }).run() },
-  { title: 'Ueberschrift 2', kw: ['h2','ueberschrift 2','heading 2','heading2'],
-    icon: 'H2',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleHeading({ level: 2 }).run() },
-  { title: 'Aufzaehlung', kw: ['ul','bullet','liste','list','aufzaehlung','aufzählung'],
-    icon: '=',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleBulletList().run() },
-  { title: 'Nummerierte Liste', kw: ['ol','nummeriert','numbered','ordered'],
-    icon: '1.',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleOrderedList().run() },
-  { title: 'Code-Block', kw: ['code','pre','block','codeblock','code-block'],
-    icon: '<>',
-    cmd: (ed, range) => ed.chain().focus().deleteRange(range).toggleCodeBlock().run() },
-  { title: 'Bild hochladen', kw: ['image','bild','foto','photo','img','pic'],
-    icon: '[+]',
-    cmd: (ed, range) => { ed.chain().focus().deleteRange(range).run(); imageInput.click() } },
-]
-
 // Slash-Filter: matcht Titel + Alias-Array (kw).
 function matchCommand(c, q) {
   if (!q) return true
   const ql = q.toLowerCase()
-  return c.title.toLowerCase().includes(ql) || c.kw.some(k => k.includes(ql))
+  return c.title.toLowerCase().includes(ql) || c.keywords.some(k => k.includes(ql))
 }
 
 function buildSlashItem(item, isFocused, props) {
@@ -342,7 +273,7 @@ function buildSlashItem(item, isFocused, props) {
   el.appendChild(labelEl)
   el.addEventListener('mousedown', e => {
     e.preventDefault()
-    item.cmd(props.editor, props.range)
+    runEditorCommand(item.action, props.editor, { range: props.range, chooseImage: () => imageInput.click() })
   })
   return el
 }
@@ -367,7 +298,7 @@ const SlashMenu = Extension.create({
       editor: this.editor,
       char: '/',
       startOfLine: false,
-      items: ({ query }) => SLASH_COMMANDS.filter(c => matchCommand(c, query)),
+      items: ({ query }) => EDITOR_COMMANDS.filter(c => matchCommand(c, query)),
       render: () => {
         let popup = null
         let selected = 0
@@ -400,7 +331,7 @@ const SlashMenu = Extension.create({
             const ed = props.editor ?? editor
             const text = ed.state.doc.textBetween(props.range.from, props.range.to, '\n') ?? ''
             const query = text.startsWith('/') ? text.slice(1) : text
-            const items = SLASH_COMMANDS.filter(c => matchCommand(c, query))
+            const items = EDITOR_COMMANDS.filter(c => matchCommand(c, query))
             if (items.length === 0) return false
             if (props.event.key === 'ArrowDown') {
               selected = (selected + 1) % items.length
@@ -416,7 +347,8 @@ const SlashMenu = Extension.create({
               // Modul-Closure statt props.editor: bleibt konsistent mit
               // mousedown-Pfad und matcht der etablierten Editor-Referenz
               // (Audit M12).
-              items[selected]?.cmd(ed, props.range)
+              const item = items[selected]
+              if (item) runEditorCommand(item.action, ed, { range: props.range, chooseImage: () => imageInput.click() })
               return true
             }
             if (props.event.key === 'Escape') {
@@ -431,7 +363,7 @@ const SlashMenu = Extension.create({
           }
         }
       },
-      command: ({ editor: ed, range, props }) => props.cmd(ed, range)
+      command: ({ editor: ed, range, props }) => runEditorCommand(props.action, ed, { range, chooseImage: () => imageInput.click() })
     })]
   }
 })
@@ -466,38 +398,28 @@ const editor = new Editor({
       return true
     }
   },
-  onUpdate() { scheduleAutoSave() }
+  onUpdate() { noteSync?.schedule() }
+})
+
+noteSync = createNoteSynchronization({
+  readContent: () => editor.getJSON(),
+  applyContent: content => editor.commands.setContent(content, false),
+  showStatus,
+  updateLastSaved,
+  setEditingAvailable,
+  onConflict: resolveConflict,
 })
 
 // Toolbar -- setzt aria-pressed für Screenreader-Toggle-State (Audit N5).
 toolbar.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]')
   if (!btn) return
-  const chain = editor.chain().focus()
-  switch (btn.dataset.action) {
-    case 'h1':      chain.toggleHeading({ level: 1 }).run(); break
-    case 'h2':      chain.toggleHeading({ level: 2 }).run(); break
-    case 'bold':    chain.toggleBold().run(); break
-    case 'italic':  chain.toggleItalic().run(); break
-    case 'bullet':  chain.toggleBulletList().run(); break
-    case 'ordered': chain.toggleOrderedList().run(); break
-    case 'code':    chain.toggleCodeBlock().run(); break
-    case 'image':   imageInput.click(); break
-  }
+  runEditorCommand(btn.dataset.action, editor, { chooseImage: () => imageInput.click() })
 })
 
 function updateToolbarState() {
   toolbar.querySelectorAll('[data-action]').forEach(btn => {
-    let active = false
-    switch (btn.dataset.action) {
-      case 'h1':      active = editor.isActive('heading', { level: 1 }); break
-      case 'h2':      active = editor.isActive('heading', { level: 2 }); break
-      case 'bold':    active = editor.isActive('bold'); break
-      case 'italic':  active = editor.isActive('italic'); break
-      case 'bullet':  active = editor.isActive('bulletList'); break
-      case 'ordered': active = editor.isActive('orderedList'); break
-      case 'code':    active = editor.isActive('codeBlock'); break
-    }
+    const active = isEditorCommandActive(btn.dataset.action, editor)
     btn.classList.toggle('active', active)
     btn.setAttribute('aria-pressed', String(active))
   })
@@ -548,9 +470,7 @@ btnClear.addEventListener('click', async () => {
   try {
     const { revision } = await clearNote()
     editor.commands.clearContent(false)
-    pendingContent = null
-    lastSavedContent = JSON.stringify(editor.getJSON())
-    knownRevision = revision
+    noteSync.markCleared(revision)
     showStatus('Gespeichert.', 'saved')
     updateLastSaved()
   } catch {
@@ -584,61 +504,10 @@ if ('serviceWorker' in navigator) {
   })
 }
 
-// pagehide -- letzten Stand synchron wegschicken, damit der 800ms-Debounce
-// nicht zum Datenverlust wird (Audit H7). keepalive erlaubt dem Browser,
-// den Tab sofort zu schließen.
-window.addEventListener('pagehide', () => {
-  if (!pendingContent) return
-  try {
-    fetch('/api/note', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: pendingContent }),
-      keepalive: true
-    })
-  } catch (err) {
-    console.error('pagehide flush fehlgeschlagen:', err)
-  }
-})
+// keepalive erlaubt dem Browser, den Tab sofort zu schließen, ohne den letzten
+// Debounce-Stand zu verlieren. Der Synchronisationszustand bleibt dabei lokal.
+window.addEventListener('pagehide', () => noteSync.flushOnPageHide())
 
-// Polling: prüft alle 5s auf Remote-Änderungen. Bei Versatz mit ungespeicherten
-// lokalen Edits nur Hinweis, sonst stiller Reload (Audit K3).
-let knownRevision = null
-let loadFailed = false
-
-async function pollForChanges() {
-  try {
-    const { content, revision } = await loadNote()
-    if (revision === knownRevision) return
-    const currentJson = JSON.stringify(editor.getJSON())
-    if (currentJson === lastSavedContent) {
-      editor.commands.setContent(content, false)
-      knownRevision = revision
-      lastSavedContent = JSON.stringify(editor.getJSON())
-    } else {
-      resolveConflict(content, revision)
-    }
-  } catch (err) {
-    // Netz weg / Server tot -- still ignorieren, nächster Tick versucht erneut.
-  }
-}
-
-// Initialer Load mit Failure-Guard: bei Fehler wird Auto-Save deaktiviert,
-// damit der User nicht den Remote-Stand überschreibt (Audit H6).
 ;(async () => {
-  try {
-    const { content, revision } = await loadNote()
-    knownRevision = revision
-    if (content && Object.keys(content).length > 0) {
-      editor.commands.setContent(content, false)
-    }
-    lastSavedContent = JSON.stringify(editor.getJSON())
-    editor.commands.focus('end')
-    setInterval(pollForChanges, 5000)
-  } catch (err) {
-    console.error('Laden fehlgeschlagen:', err)
-    loadFailed = true
-    setEditingAvailable(false)
-    showStatus('Laden fehlgeschlagen — Auto-Save deaktiviert.', 'error')
-  }
+  if (await noteSync.start()) editor.commands.focus('end')
 })()

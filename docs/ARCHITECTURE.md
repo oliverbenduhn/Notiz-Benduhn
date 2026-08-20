@@ -73,11 +73,10 @@ erDiagram
 - Multi-tenant not possible without schema change. If the product needs
   per-user notes, switch to `(user_id, note_id)` composite PK and rework
   the API contract before adding features.
-- Every client sees every keystroke (modulo network latency). No conflict
-  resolution; last-write-wins on `PUT /api/note`.
-- A long-running PUT could collide with another. Mitigation: 800 ms
-  debounce on the client, and the server processes requests sequentially
-  per Express handler (single-threaded Node).
+- Clients detect concurrent edits through the monotonic `revision` and
+  explicitly choose whether to keep local or accept the remote version.
+- A PUT is conditional on the caller's `revision`; stale writes receive 409.
+  The client serializes its own saves and debounces edits for 800 ms.
 
 ## 3. Database schema
 
@@ -109,9 +108,10 @@ Base URL: same origin as the app. All endpoints accept and return JSON
 unless noted. Errors return `{ "error": "<message>" }` with an
 appropriate HTTP status.
 
-### `GET /api/note`
+### `GET /api/note[?since=<revision>]`
 
-Returns the current note content.
+Returns the current note content. With the caller's known `revision`, an
+unchanged note returns no document body.
 
 **Response 200:**
 
@@ -123,6 +123,9 @@ The `content` field is the parsed JSON document, not the stored string.
 `updatedAt` is informational. `revision` is incremented for every successful
 write and is used by the client to detect concurrent edits reliably.
 
+**Response 204:** when `since` matches the current revision. This is the
+short-poll fast path; clients keep their current document unchanged.
+
 ### `PUT /api/note`
 
 Replaces the note content.
@@ -130,16 +133,19 @@ Replaces the note content.
 **Request body:**
 
 ```json
-{ "content": { "type": "doc", "content": [...] } }
+{ "content": { "type": "doc", "content": [...] }, "revision": 42 }
 ```
 
-**Validation:** `content` must be present and be an object.
+**Validation:** `content` must be Tiptap-shaped and, for revision-aware
+clients, `revision` must be a non-negative integer previously returned by the
+API. The revision is optional only while pre-v0.3 tabs remain active after the
+service-worker rollout.
 
 | Status | Meaning                                     |
 | ------ | ------------------------------------------- |
 | 200    | OK, body is `{ "ok": true, "updatedAt": "...", "revision": 42 }` |
-| 400    | `content` missing or not an object          |
-| 422    | `content` is not a Tiptap-shaped object (`type: "doc"`) |
+| 409    | Another client wrote a newer revision; response includes its `content` and `revision` |
+| 422    | Invalid content or revision                 |
 
 Body limit: 1 MB JSON.
 
@@ -160,7 +166,10 @@ file signature before writing a `note_images` row. Filename is
 ### `DELETE /api/note`
 
 Clears the singleton note and removes every associated image row and upload.
-Returns the same `{ ok, updatedAt, revision }` write response.
+The JSON body carries the current `revision`; a stale clear returns the same
+409 conflict payload as PUT. The revision is optional only while pre-v0.3 tabs
+remain active after the service-worker rollout. A successful clear returns
+`{ ok, updatedAt, revision }`.
 
 ### `DELETE /api/images/:filename`
 
@@ -192,11 +201,11 @@ sequenceDiagram
   E->>E: onUpdate fires
   E->>E: debounce 800 ms
   E-->>U: status "Speichern..."
-  E->>API: PUT /api/note (JSON body)
-  API->>API: validate content is object
-  API->>DB: UPDATE note SET content=?, updated_at=NOW WHERE id=1
+  E->>API: PUT /api/note (content + revision)
+  API->>API: validate content and revision
+  API->>DB: UPDATE ... WHERE id=1 AND revision=?
   DB-->>API: rows changed
-  API-->>E: 200 { ok: true }
+  API-->>E: 200 { ok: true, revision } or 409 { content, revision }
   E-->>U: status "Gespeichert." (auto-clear after 3 s)
   E-->>U: footer "gespeichert: gerade eben" (auto-clear after 5 s)
 ```
@@ -207,23 +216,32 @@ debounce does NOT retry — the user must trigger another edit.
 
 ## 6. Frontend module map
 
-`public/app.js` runs as an ES module. The structure is intentionally flat:
+`public/app.js` runs as an ES module and keeps editor/UI behavior local.
+`public/note-sync.js` owns synchronization state and its transitions:
 
 ```
 ┌─ DOM refs (#editor, #save-status, #btn-clear, #toolbar, #image-input)
 ├─ confirmDialog(message)            ← native <dialog> wrapper
-├─ loadNote / saveNote               ← REST helpers
+├─ createNoteSynchronization(...)    ← synchronization seam
+├─ EDITOR_COMMANDS                   ← toolbar + slash-menu command facts
 ├─ uploadImage / deleteImageFile     ← image REST helpers
 ├─ openImageOverlay(src)             ← fullscreen overlay on image click
 ├─ insertImageFromFile(file)         ← orchestrates upload + editor insert
 ├─ createImageNodeView(props, ed)    ← Tiptap NodeView for <img>
-├─ scheduleAutoSave                  ← 800 ms debounce → saveNote
 ├─ SLASH_COMMANDS                    ← static list of /menu entries
 ├─ matchCommand(cmd, query)          ← title + kw-array filter
 ├─ buildSlashItem / renderSlashMenu / positionSlashMenu
 ├─ SlashMenu                         ← Tiptap Extension wrapping Suggestion
 └─ editor = new Editor({...})        ← single Tiptap instance
 ```
+
+`public/note-sync.js` keeps the pending document, saved snapshot, revision,
+polling, debounce, pagehide flush, and conflict transitions behind one small
+interface. `app.js` supplies Tiptap reads/writes and renders the conflict
+dialog, but does not mutate synchronization state directly.
+
+`public/editor-commands.js` holds command actions, aliases, execution, and
+active-state facts. The toolbar markup and slash menu are the two callers.
 
 `editor` is a module-private `const`. The slash menu, toolbar, image
 NodeView, and confirm dialog all reach it via closure — never via
