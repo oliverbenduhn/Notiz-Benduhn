@@ -51,4 +51,12 @@ jobs:
             sudo git pull origin main
             sudo docker compose build --no-cache
             sudo docker compose up -d
-            echo "Deploy abgeschlossen: $(sudo docker ps --filter name=notiz-benduhn --format '{{.Status}}')"
+            container=$(sudo docker compose ps -q notiz-benduhn)
+            for _ in $(seq 1 12); do
+              status=$(sudo docker inspect --format '{{.State.Health.Status}}' "$container")
+              [ "$status" = healthy ] && break
+              [ "$status" = unhealthy ] && exit 1
+              sleep 5
+            done
+            [ "$status" = healthy ]
+            echo "Deploy abgeschlossen: $status"
