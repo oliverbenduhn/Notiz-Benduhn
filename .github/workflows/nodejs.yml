@@ -45,9 +45,10 @@ jobs:
           proxy_host: ${{ secrets.DEPLOY_VPS_HOST }}
           proxy_username: ansible
           proxy_key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
           script: |
             cd /etc/komodo/stacks/notiz-benduhn
-            git pull origin main
-            docker compose build --no-cache
-            docker compose up -d
-            echo "Deploy abgeschlossen: $(docker ps --filter name=notiz-benduhn --format '{{.Status}}')"
+            sudo git pull origin main
+            sudo docker compose build --no-cache
+            sudo docker compose up -d
+            echo "Deploy abgeschlossen: $(sudo docker ps --filter name=notiz-benduhn --format '{{.Status}}')"
